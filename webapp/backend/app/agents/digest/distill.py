@@ -238,8 +238,12 @@ def _user_text(ev: dict) -> str | None:
             cleaned.append(compacted)
     joined = " | ".join(cleaned)
     if len(joined) > _USER_TEXT_MAX:
+        # Keep head AND tail: in a giant paste the ask is often the
+        # sentence after the log, not before it.
         over = len(joined) - _USER_TEXT_MAX
-        joined = joined[:_USER_TEXT_MAX] + f"… [+{over} chars]"
+        head = joined[: _USER_TEXT_MAX // 2]
+        tail = joined[len(joined) - (_USER_TEXT_MAX - _USER_TEXT_MAX // 2):]
+        joined = f"{head}… [{over} chars elided] …{tail}"
     return joined or None
 
 

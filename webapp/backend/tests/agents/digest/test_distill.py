@@ -396,14 +396,20 @@ def test_system_reminder_blocks_are_stripped():
     assert "u2" not in uuids
 
 
-def test_giant_user_paste_is_capped():
+def test_giant_user_paste_keeps_head_and_tail():
+    # The ask often FOLLOWS a pasted log, so the cap must keep both ends.
     # The paste is multi-line, so assert on the whole (single-event) output
     # rather than splitlines().
-    payload = "the test fails with this log: " + "E AssertionError\n" * 600
+    payload = (
+        "the test fails with this log: "
+        + "E AssertionError\n" * 600
+        + "why does only the CI run hit this?"
+    )
     out = distill(_user_record("u1", payload), subagent_blobs={})
     assert out.startswith("[u1] USER: the test fails with this log:")
+    assert out.endswith("why does only the CI run hit this?")
+    assert "chars elided]" in out
     assert len(out) < 2200
-    assert out.endswith("chars]")  # truncation marker with the elided count
 
 
 def test_edited_paths_collects_edit_tool_targets():
