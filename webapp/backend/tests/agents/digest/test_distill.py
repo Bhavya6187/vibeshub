@@ -160,9 +160,11 @@ def test_short_exploration_run_not_collapsed():
 
 
 def test_long_exploration_run_is_collapsed():
-    # 12 reads + 3 greps = 15 consecutive tool calls
+    # 12 reads + 3 greps = 15 consecutive tool calls. The synthetic blob
+    # renders to ~680 chars, i.e. ~204 estimated tokens at 0.3/char, so
+    # a 150-token target forces the adaptive collapse.
     blob = _synth_exploration_blob(reads=12, greps=3)
-    out = distill(blob, subagent_blobs={}, target_tokens=200)
+    out = distill(blob, subagent_blobs={}, target_tokens=150)
     # The individual Reads are gone, replaced with one collapse line
     assert out.count("Read webapp/backend/app/file_") == 0
     assert "[exploration:" in out
@@ -295,6 +297,113 @@ def test_edit_preview_caps_at_three_lines_and_line_length():
     assert "line two" in out
     assert "line three" in out
     assert "line four" not in out   # 4th line dropped by the 3-line cap
+
+
+def _user_record(uuid: str, text: str, **extra) -> bytes:
+    import json
+    rec = {"type": "user", "uuid": uuid,
+           "message": {"content": text}, **extra}
+    return (json.dumps(rec) + "\n").encode("utf-8")
+
+
+def test_meta_user_records_are_dropped():
+    # Skill tool bodies are replayed as user messages with isMeta: true.
+    # They are not user-authored and must not reach the LLM or the
+    # anchorable uuid surface.
+    from app.agents.digest.distill import distill_with_uuids
+    blob = (
+        _user_record("m1", "Base directory for this skill: /x/y/z. " * 50,
+                     isMeta=True)
+        + _user_record("u1", "fix the login bug")
+    )
+    text, uuids = distill_with_uuids(blob, subagent_blobs={})
+    assert "Base directory for this skill" not in text
+    assert "m1" not in uuids
+    assert "USER: fix the login bug" in text
+    assert "u1" in uuids
+
+
+def test_task_notification_compacts_to_one_liner():
+    payload = (
+        "<task-notification>\n"
+        "<task-id>abc123</task-id>\n"
+        "<tool-use-id>toolu_01X</tool-use-id>\n"
+        "<output-file>/tmp/tasks/abc123.output</output-file>\n"
+        "<status>completed</status>\n"
+        "<summary>Agent \"Review Task 7\" finished</summary>\n"
+        "<note>A task-notification fires each time this agent stops with no "
+        "live background children of its own.</note>\n"
+        "<result>Spec compliance verified. " + "Details. " * 60 + "</result>\n"
+        "</task-notification>"
+    )
+    out = distill(_user_record("t1", payload), subagent_blobs={})
+    line = next(ln for ln in out.splitlines() if ln.startswith("[t1]"))
+    assert '[background task completed] Agent "Review Task 7" finished' in line
+    assert "Spec compliance verified." in line
+    # Boilerplate fields never survive
+    assert "task-notification fires" not in line
+    assert "toolu_01X" not in line
+    # The result is prefix-truncated, not inlined wholesale
+    assert len(line) < 400
+
+
+def test_slash_command_renders_compact():
+    payload = (
+        "<command-name>compact</command-name>"
+        "<command-message>compact</command-message>"
+        "<command-args>keep the test plan</command-args>"
+    )
+    out = distill(_user_record("c1", payload), subagent_blobs={})
+    assert "USER: /compact keep the test plan" in out
+    assert "<command-name>" not in out
+
+
+def test_command_tags_amid_prose_pass_through():
+    # A user genuinely talking ABOUT the tags is not a slash command.
+    payload = "why does <command-name>foo</command-name> appear in my trace?"
+    out = distill(_user_record("c2", payload), subagent_blobs={})
+    assert "appear in my trace?" in out
+
+
+def test_local_command_stdout_compacts():
+    payload = (
+        "<local-command-stdout>\x1b[32mAll 12 checks passed\x1b[0m\n"
+        + "noise line\n" * 40
+        + "</local-command-stdout>"
+    )
+    out = distill(_user_record("s1", payload), subagent_blobs={})
+    line = next(ln for ln in out.splitlines() if ln.startswith("[s1]"))
+    assert "[command output] All 12 checks passed" in line
+    assert "\x1b[" not in line
+    assert len(line) < 200
+
+
+def test_system_reminder_blocks_are_stripped():
+    from app.agents.digest.distill import distill_with_uuids
+    prose = "please fix the flaky test"
+    payload = (
+        f"{prose}<system-reminder>Contents of MEMORY.md: secret context "
+        "the digest should never quote</system-reminder>"
+    )
+    blob = (
+        _user_record("u1", payload)
+        # A message that is NOTHING but a reminder drops out entirely.
+        + _user_record("u2", "<system-reminder>background only</system-reminder>")
+    )
+    text, uuids = distill_with_uuids(blob, subagent_blobs={})
+    assert prose in text
+    assert "MEMORY.md" not in text
+    assert "u2" not in uuids
+
+
+def test_giant_user_paste_is_capped():
+    # The paste is multi-line, so assert on the whole (single-event) output
+    # rather than splitlines().
+    payload = "the test fails with this log: " + "E AssertionError\n" * 600
+    out = distill(_user_record("u1", payload), subagent_blobs={})
+    assert out.startswith("[u1] USER: the test fails with this log:")
+    assert len(out) < 2200
+    assert out.endswith("chars]")  # truncation marker with the elided count
 
 
 def test_edited_paths_collects_edit_tool_targets():

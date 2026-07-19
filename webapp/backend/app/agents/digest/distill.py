@@ -9,6 +9,7 @@ returns str out. Easy to unit-test against fixture jsonls.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 _DROPPED_TYPES = {
@@ -39,7 +40,13 @@ _BASH_COMMAND_MAX = 120
 _DEFAULT_TARGET_TOKENS = 60_000
 _DEFAULT_HARDCAP_TOKENS = 200_000
 _EXPLORATION_RUN_MIN = 6
-_TOKENS_PER_CHAR = 0.4  # rough estimate; good enough for budget gating
+# Measured with o200k_base on real traces: distilled output runs
+# 0.26-0.32 tokens/char. 0.4 overshot by 25-50%, tripping collapse and
+# the hard cap well before the intended budgets.
+_TOKENS_PER_CHAR = 0.3
+# Genuine user prose averages ~300 chars; anything much larger is a
+# pasted log or stack trace whose signal is in the head.
+_USER_TEXT_MAX = 2000
 _EDIT_TOOLS = {"Write", "Edit", "MultiEdit"}
 _EDIT_PREVIEW_LINES = 3
 _EDIT_PREVIEW_LINE_MAX = 80
@@ -142,6 +149,12 @@ def _render(
     uuid = ev.get("uuid", "")
     prefix = f"[{uuid}] " if uuid else ""
     if et == "user":
+        # Synthetic user records injected by Claude Code itself (Skill
+        # bodies replayed with isMeta: true). Not user-authored; often
+        # 5-20k chars each of boilerplate the digest must not mistake
+        # for the user's ask.
+        if ev.get("isMeta") is True:
+            return None
         text = _user_text(ev)
         if text is None:
             return None
@@ -154,13 +167,56 @@ def _render(
     return None
 
 
+_CMD_TAG_RE = re.compile(r"<command-(name|message|args)>([\s\S]*?)</command-\1>")
+_LOCAL_STDOUT_RE = re.compile(
+    r"<local-command-std(?:out|err)>([\s\S]*?)</local-command-std(?:out|err)>"
+)
+_TASK_NOTIF_FIELD_RE = re.compile(r"<(status|summary|result)>([\s\S]*?)</\1>")
+_SYSTEM_REMINDER_RE = re.compile(r"<system-reminder>[\s\S]*?</system-reminder>")
+_ANSI_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _compact_wrapper_text(text: str) -> str | None:
+    """Rewrite Claude Code's injected user-message wrappers into compact
+    one-liners; ordinary user prose passes through unchanged."""
+    stripped = text.strip()
+    if stripped.startswith("<task-notification>"):
+        fields = dict(_TASK_NOTIF_FIELD_RE.findall(stripped))
+        summary = " ".join((fields.get("summary") or "").split())
+        result = " ".join((fields.get("result") or "").split())[:160]
+        status = fields.get("status") or "done"
+        body = ": ".join(p for p in (summary, result) if p)
+        return f"[background task {status}] {body}".strip()
+    if "<command-name>" in stripped:
+        tags = _CMD_TAG_RE.findall(stripped)
+        if tags and not _CMD_TAG_RE.sub("", stripped).strip():
+            parts = {k: v.strip() for k, v in tags}
+            name = parts.get("name", "")
+            if not name:
+                return None
+            if not name.startswith("/"):
+                name = f"/{name}"
+            args = parts.get("args", "")
+            return f"{name} {args}".strip()
+    if stripped.startswith(("<local-command-stdout>", "<local-command-stderr>")):
+        inner = " ".join(
+            m.strip() for m in _LOCAL_STDOUT_RE.findall(stripped) if m.strip()
+        )
+        inner = " ".join(_ANSI_SGR_RE.sub("", inner).split())
+        if inner == "(no content)":
+            inner = ""
+        inner = inner[:_TOOL_RESULT_PREFIX]
+        return f"[command output] {inner}".strip()
+    return text
+
+
 def _user_text(ev: dict) -> str | None:
     msg = ev.get("message") or {}
     content = msg.get("content")
+    parts: list[str] = []
     if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
+        parts = [content]
+    elif isinstance(content, list):
         for block in content:
             if not isinstance(block, dict):
                 continue
@@ -168,9 +224,23 @@ def _user_text(ev: dict) -> str | None:
                 parts.append(str(block.get("text") or ""))
             elif block.get("type") == "tool_result":
                 parts.append(_tool_result_to_line(block))
-        joined = " | ".join(p for p in parts if p)
-        return joined or None
-    return None
+    else:
+        return None
+    cleaned: list[str] = []
+    for p in parts:
+        if not p:
+            continue
+        p = _SYSTEM_REMINDER_RE.sub("", p).strip()
+        if not p:
+            continue
+        compacted = _compact_wrapper_text(p)
+        if compacted:
+            cleaned.append(compacted)
+    joined = " | ".join(cleaned)
+    if len(joined) > _USER_TEXT_MAX:
+        over = len(joined) - _USER_TEXT_MAX
+        joined = joined[:_USER_TEXT_MAX] + f"… [+{over} chars]"
+    return joined or None
 
 
 def _render_assistant(
