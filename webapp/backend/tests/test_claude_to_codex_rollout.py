@@ -26,11 +26,18 @@ def _out() -> list[dict]:
     return _records(claude_to_codex_rollout(raw, session_uuid=SESSION_UUID))
 
 
+def _claude_lines(*records: dict) -> bytes:
+    """A hand-written Claude-shaped JSONL blob, for the edge cases the
+    sample fixture does not contain."""
+    return ("\n".join(json.dumps(r) for r in records) + "\n").encode("utf-8")
+
+
 def test_first_line_is_session_meta_with_given_uuid():
     first = _out()[0]
     assert first["type"] == "session_meta"
     assert first["payload"]["id"] == SESSION_UUID
     assert first["payload"]["originator"] == "vibeshub"
+    assert "git" not in first["payload"]
 
 
 def test_user_text_appears_as_both_response_item_and_event_msg():
@@ -61,6 +68,51 @@ def test_tool_results_pair_by_call_id():
     out_ids = {r["payload"]["call_id"] for r in recs
                if r["payload"].get("type") == "function_call_output"}
     assert out_ids <= call_ids and out_ids
+
+
+def test_interrupted_tool_use_gets_a_synthesized_output():
+    # An interrupted session ends on a tool_use whose tool_result was never
+    # written. The Responses API rejects unpaired calls on resume.
+    raw = _claude_lines(
+        {"type": "user", "timestamp": "2026-07-24T18:00:00.000Z",
+         "cwd": "/repo", "message": {"role": "user", "content": "read it"}},
+        {"type": "assistant", "timestamp": "2026-07-24T18:00:01.000Z",
+         "cwd": "/repo", "message": {"role": "assistant", "content": [
+             {"type": "tool_use", "id": "toolu_dangling", "name": "Read",
+              "input": {"file_path": "/repo/x.py"}}]}},
+    )
+    recs = _records(claude_to_codex_rollout(raw, session_uuid=SESSION_UUID))
+    outputs = [r for r in recs
+               if r["payload"].get("type") == "function_call_output"]
+    assert [o["payload"]["call_id"] for o in outputs] == ["toolu_dangling"]
+    assert outputs[0]["payload"]["output"] == "(tool result not recorded)"
+    assert outputs[0]["timestamp"] == "2026-07-24T18:00:01.000Z"
+
+
+def test_paired_tool_use_gets_no_synthesized_output():
+    raw = _claude_lines(
+        {"type": "assistant", "timestamp": "2026-07-24T18:00:01.000Z",
+         "cwd": "/repo", "message": {"role": "assistant", "content": [
+             {"type": "tool_use", "id": "toolu_paired", "name": "Read",
+              "input": {"file_path": "/repo/x.py"}}]}},
+        {"type": "user", "timestamp": "2026-07-24T18:00:02.000Z",
+         "cwd": "/repo", "message": {"role": "user", "content": [
+             {"type": "tool_result", "tool_use_id": "toolu_paired",
+              "content": "file body"}]}},
+    )
+    recs = _records(claude_to_codex_rollout(raw, session_uuid=SESSION_UUID))
+    outputs = [r["payload"] for r in recs
+               if r["payload"].get("type") == "function_call_output"]
+    assert [o["output"] for o in outputs] == ["file body"]
+
+
+def test_non_dict_message_is_skipped_without_raising():
+    raw = _claude_lines(
+        {"type": "user", "timestamp": "2026-07-24T18:00:00.000Z",
+         "cwd": "/repo", "message": "hello"},
+    )
+    recs = _records(claude_to_codex_rollout(raw, session_uuid=SESSION_UUID))
+    assert [r["type"] for r in recs] == ["session_meta"]
 
 
 def test_no_thinking_or_reasoning_leaks():
@@ -100,5 +152,6 @@ def test_rollout_filename_from_blob_roundtrip():
 def test_conversion_matches_golden():
     raw = (FIXTURES / "claude_export" / "sample.jsonl").read_bytes()
     golden = (FIXTURES / "claude_export" / "sample.golden.jsonl").read_bytes()
-    assert _records(claude_to_codex_rollout(
-        raw, session_uuid=SESSION_UUID)) == _records(golden)
+    out = claude_to_codex_rollout(raw, session_uuid=SESSION_UUID)
+    assert _records(out) == _records(golden)
+    assert out == golden

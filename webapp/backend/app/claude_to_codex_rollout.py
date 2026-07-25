@@ -53,6 +53,9 @@ import uuid
 from typing import Any
 
 _EPOCH_TS = "1970-01-01T00:00:00.000Z"
+# Stand-in output for a tool call whose result never reached the transcript
+# (interrupted session). The Responses API rejects an unpaired call on resume.
+_MISSING_OUTPUT = "(tool result not recorded)"
 
 
 def uuid7_from(ts_ms: int, seed: str) -> str:
@@ -159,9 +162,13 @@ def claude_to_codex_rollout(
         })
         push(ts, "event_msg", {"type": "user_message", "message": text})
 
+    call_ids: list[str] = []  # function_call ids, in emission order
+    output_ids: set[str] = set()  # ids a function_call_output was emitted for
+
     for rec in convo:
         ts = rec.get("timestamp") or first_ts
-        msg = rec.get("message") or {}
+        msg = rec.get("message")
+        msg = msg if isinstance(msg, dict) else {}
         content = msg.get("content")
         if rec["type"] == "user":
             if isinstance(content, str):
@@ -175,9 +182,11 @@ def claude_to_codex_rollout(
                 if not isinstance(block, dict):
                     continue
                 if block.get("type") == "tool_result":
+                    call_id = str(block.get("tool_use_id") or "")
+                    output_ids.add(call_id)
                     push(ts, "response_item", {
                         "type": "function_call_output",
-                        "call_id": str(block.get("tool_use_id") or ""),
+                        "call_id": call_id,
                         "output": _stringify(block.get("content")),
                     })
                 elif block.get("type") == "text":
@@ -206,12 +215,27 @@ def claude_to_codex_rollout(
                     name, args = _map_tool(
                         str(block.get("name") or ""), block.get("input")
                     )
+                    call_id = str(block.get("id") or "")
+                    call_ids.append(call_id)
                     push(ts, "response_item", {
                         "type": "function_call", "name": name,
                         "arguments": json.dumps(args, ensure_ascii=False),
-                        "call_id": str(block.get("id") or ""),
+                        "call_id": call_id,
                     })
                 # thinking blocks are dropped by design (see spec).
+
+    # Interrupted sessions end on a tool_use whose tool_result was never
+    # written. Codex resume feeds history to the Responses API, which rejects
+    # a function_call with no matching output, so pair the leftovers up.
+    last_ts = out[-1]["timestamp"] if out else first_ts
+    for call_id in call_ids:
+        if call_id in output_ids:
+            continue
+        output_ids.add(call_id)
+        push(last_ts, "response_item", {
+            "type": "function_call_output", "call_id": call_id,
+            "output": _MISSING_OUTPUT,
+        })
 
     body = "\n".join(
         json.dumps(r, ensure_ascii=False, separators=(",", ":")) for r in out
