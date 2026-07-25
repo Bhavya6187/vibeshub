@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import urlsplit
 
 _ROLLOUT_RE = re.compile(
     r"^rollout-(\d{4})-(\d{2})-(\d{2})T\d{2}-\d{2}-\d{2}-.+\.jsonl$"
@@ -27,8 +28,6 @@ def parse_trace_ref(arg: str, default_server: str) -> tuple[str, str]:
                 f"not a trace URL (expected .../t/<id>): {arg}"
             )
         server, short_id = value.rsplit("/t/", 1)
-        if not short_id:
-            raise ImportTraceError(f"empty trace id in URL: {arg}")
         return server, short_id
     if "/" in value or not value:
         raise ImportTraceError(f"not a trace URL or short id: {arg}")
@@ -50,11 +49,26 @@ def _get(url: str, token: str | None) -> tuple[int, bytes, dict]:
 
 
 def fetch_export(
-    server_url: str, short_id: str, target: str,
+    server_url: str,
+    short_id: str,
+    target: str,
+    *,
+    trusted_netloc: str | None = None,
 ) -> tuple[bytes, dict]:
+    """Download an export. The bearer retry only ever goes to
+    `trusted_netloc`: a pasted look-alike URL that answers 401 would
+    otherwise harvest the user's GitHub token."""
     url = f"{server_url.rstrip('/')}/api/traces/{short_id}/export/{target}"
     status, body, headers = _get(url, token=None)
     if status == 401:
+        host = urlsplit(server_url).netloc
+        # No trusted host configured means no host is trusted (fail closed).
+        if not trusted_netloc or host.lower() != trusted_netloc.lower():
+            raise ImportTraceError(
+                f"this trace is private and lives on {host}; refusing to "
+                "send your GitHub token there. If that server is really "
+                f"yours, set VIBESHUB_SERVER_URL=https://{host} and re-run"
+            )
         from vibeshub_client.gh_token import GhTokenError, get_gh_token
         try:
             token = get_gh_token()
@@ -102,7 +116,11 @@ def re_id_codex(blob: bytes, new_uuid: str) -> bytes:
             rec = json.loads(line)
         except json.JSONDecodeError:
             break
-        if isinstance(rec, dict) and rec.get("type") == "session_meta":
+        if (
+            isinstance(rec, dict)
+            and rec.get("type") == "session_meta"
+            and isinstance(rec.get("payload"), dict)
+        ):
             rec["payload"]["id"] = new_uuid
             lines[i] = json.dumps(
                 rec, ensure_ascii=False, separators=(",", ":")
@@ -147,7 +165,10 @@ def run_import(
 ) -> int:
     from vibeshub_client.repo_state import repo_state_report
     server_url, short_id = parse_trace_ref(ref, server)
-    blob, headers = fetch_export(server_url, short_id, target)
+    blob, headers = fetch_export(
+        server_url, short_id, target,
+        trusted_netloc=urlsplit(server).netloc,
+    )
     filename = headers.get("x-vibeshub-filename", "")
     session_uuid = headers.get("x-vibeshub-session-uuid", "")
     if not filename or not session_uuid:
@@ -175,7 +196,7 @@ def run_import(
             print(f"session already imported; re-id as {new_uuid}")
         place(dest, blob)
         resume = f"codex resume {session_uuid}"
-    else:
+    elif target == "claude":
         claude_home = Path(
             os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")
         )
@@ -188,6 +209,8 @@ def run_import(
             print(f"session already imported; re-id as {new_uuid}")
         place(dest, blob)
         resume = f"claude --resume {session_uuid}"
+    else:
+        raise ImportTraceError(f"unknown target: {target}")
 
     print(f"placed {dest}")
     for line in repo_state_report(headers, cwd, checkout=checkout):
