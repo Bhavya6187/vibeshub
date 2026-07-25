@@ -97,7 +97,8 @@ def codex_to_claude_session(blob: bytes, *, session_id: str) -> bytes:
                 if (
                     isinstance(part, dict)
                     and part.get("type") == "output_text"
-                    and _s(part.get("text"))
+                    and isinstance(part.get("text"), str)
+                    and part["text"]
                 ):
                     envelope("assistant", ts, assistant_msg(
                         [{"type": "text", "text": part["text"]}]
@@ -142,4 +143,7 @@ def codex_to_claude_session(blob: bytes, *, session_id: str) -> bytes:
         json.dumps(r, ensure_ascii=False, separators=(",", ":"))
         for r in records
     )
-    return (body + "\n").encode("utf-8")
+    # Zero records means nothing convertible was found. Return empty bytes,
+    # never a lone newline, so callers can tell "no session" from "a session"
+    # and an export never serves a blank-but-valid-looking file.
+    return (body + "\n").encode("utf-8") if records else b""

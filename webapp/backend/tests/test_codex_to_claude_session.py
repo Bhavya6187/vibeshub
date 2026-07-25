@@ -68,6 +68,9 @@ def test_malformed_records_are_skipped_not_raised():
         b'"name":"exec_command","call_id":"c1","arguments":"[1,2]"}}',
         b'{"type":"event_msg","payload":{"type":"user_message",'
         b'"message":{"not":"a string"}}}',
+        b'{"type":"response_item","payload":{"type":"message",'
+        b'"role":"assistant","content":[{"type":"output_text",'
+        b'"text":{"x":1}}]}}',
         b'{"timestamp":"t","type":"event_msg","payload":'
         b'{"type":"user_message","message":"survivor"}}',
     ])
@@ -75,10 +78,29 @@ def test_malformed_records_are_skipped_not_raised():
             for line in codex_to_claude_session(blob, session_id=SID)
             .splitlines() if line.strip()]
     # The malformed exec_command still converts (non-dict args -> {}); only
-    # the unusable records drop out.
+    # the unusable records drop out. A non-str output_text is one of them:
+    # emitting it raw would produce a non-Anthropic-shaped text block.
     assert [r["message"].get("content") for r in recs if r["type"] == "user"] \
         == ["survivor"]
     assert len(recs) == 2
+
+
+def test_unconvertible_input_returns_empty_bytes():
+    """An export must never serve a syntactically-valid but empty file."""
+    assert codex_to_claude_session(b"", session_id=SID) == b""
+    assert codex_to_claude_session(b"not json\n", session_id=SID) == b""
+
+
+def test_envelope_fields_are_resume_grade():
+    """Pins the envelope contract Claude Code needs to resume a session."""
+    recs = _records()
+    for r in recs:
+        assert isinstance(r["cwd"], str) and r["cwd"]
+        assert r["userType"] == "external"
+        assert "timestamp" in r
+        assert "version" not in r
+        # kitchen_sink's session_meta carries git.branch == "main".
+        assert r["gitBranch"] == "main"
 
 
 def test_user_prompts_come_from_event_msg_not_env_context():
