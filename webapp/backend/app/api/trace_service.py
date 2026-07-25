@@ -96,6 +96,8 @@ async def create_or_update_trace(
     source_export_bytes: bytes | None = None,
     source_format: str | None = None,
     claim_token_hash: str | None = None,
+    git_branch: str | None = None,
+    git_commit: str | None = None,
 ) -> TraceWriteResult:
     """Write the bundle's blobs and create or refresh the matching Trace row.
 
@@ -192,6 +194,8 @@ async def create_or_update_trace(
         trace.agents = agent_summaries
         trace.agent_count = len(agent_summaries)
         trace.source_format = source_format
+        trace.git_branch = git_branch
+        trace.git_commit = git_commit
     else:
         trace = Trace(
             short_id=sid,
@@ -214,6 +218,8 @@ async def create_or_update_trace(
             agent_count=len(agent_summaries),
             source_format=source_format,
             claim_token_hash=claim_token_hash,
+            git_branch=git_branch,
+            git_commit=git_commit,
         )
         session.add(trace)
 

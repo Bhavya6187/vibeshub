@@ -432,3 +432,54 @@ async def test_ingest_cursor_platform_and_uuid_agent(client, respx_mock):
     assert trace.agent_count == 1
     assert trace.agents[0]["agent_id"] == uuid
     assert trace.agents[0]["tool_use_id"] == "cursor-agent-0"
+
+
+@pytest.mark.asyncio
+async def test_ingest_stores_git_headers(client, respx_mock):
+    _mock_alice_pr1(respx_mock)
+
+    headers = {
+        **COMMON_HEADERS,
+        "X-Vibeshub-Git-Branch": "feature/x",
+        "X-Vibeshub-Git-Commit": "b" * 40,
+    }
+    body = make_bundle({"main.jsonl": b'{"type":"user"}\n'})
+    r = client.post("/api/ingest", content=body, headers=headers)
+    assert r.status_code == 201, r.text
+    short_id = r.json()["short_id"]
+
+    SessionLocal = client.app.state.session_maker
+    async with SessionLocal() as session:
+        trace = (
+            await session.execute(select(Trace).where(Trace.short_id == short_id))
+        ).scalar_one()
+
+    assert trace.git_branch == "feature/x"
+    assert trace.git_commit == "b" * 40
+
+
+@pytest.mark.asyncio
+async def test_ingest_rejects_malformed_git_commit_silently(
+    client, respx_mock
+):
+    _mock_alice_pr1(respx_mock)
+
+    headers = {
+        **COMMON_HEADERS,
+        "X-Vibeshub-Git-Branch": "feature/x",
+        "X-Vibeshub-Git-Commit": "not-a-sha",
+    }
+    body = make_bundle({"main.jsonl": b'{"type":"user"}\n'})
+    r = client.post("/api/ingest", content=body, headers=headers)
+    # Bad git metadata never fails an upload: it is silently dropped.
+    assert r.status_code == 201, r.text
+    short_id = r.json()["short_id"]
+
+    SessionLocal = client.app.state.session_maker
+    async with SessionLocal() as session:
+        trace = (
+            await session.execute(select(Trace).where(Trace.short_id == short_id))
+        ).scalar_one()
+
+    assert trace.git_commit is None
+    assert trace.git_branch == "feature/x"
