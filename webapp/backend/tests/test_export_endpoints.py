@@ -1,6 +1,7 @@
 """Export endpoint tests. Traces are seeded through /api/ingest with
 respx-mocked GitHub, mirroring test_e2e.py's helpers."""
 import json
+import uuid
 from pathlib import Path
 
 from sqlalchemy import select
@@ -27,7 +28,9 @@ REASONING_ONLY_ROLLOUT = (
 BEARER = {"Authorization": "Bearer ghp_test"}
 
 
-def _upload(client, respx_mock, blob: bytes, platform: str) -> str:
+def _upload(
+    client, respx_mock, blob: bytes, platform: str, git_branch: str = "main",
+) -> str:
     respx_mock.get("https://api.github.test/user").respond(
         200, json={"login": "alice", "id": 7}
     )
@@ -38,7 +41,7 @@ def _upload(client, respx_mock, blob: bytes, platform: str) -> str:
             "X-Vibeshub-Platform": platform,
             "X-Vibeshub-Plugin-Version": "0.6.0",
             "X-Vibeshub-Client-Redactions": "0",
-            "X-Vibeshub-Git-Branch": "main",
+            "X-Vibeshub-Git-Branch": git_branch,
             "X-Vibeshub-Git-Commit": "c" * 40,
             "Content-Type": "application/x-tar",
             "Authorization": "Bearer ghp_test",
@@ -93,6 +96,58 @@ def test_claude_native_to_claude_is_verbatim(client, respx_mock):
     # Verbatim modulo server redaction: same line count, same first uuid.
     assert len(r.content.splitlines()) == len(blob.splitlines())
     assert r.headers["x-vibeshub-filename"].endswith(".jsonl")
+
+
+def test_claude_verbatim_is_named_by_the_session_id_inside_the_file(
+    client, respx_mock,
+):
+    """Web uploads carry no session id header, so the export name has to come
+    from the records themselves: Claude Code only resumes a session when the
+    filename matches the sessionId written inside it."""
+    blob = CLAUDE_FIXTURE.read_bytes()
+    inner_id = json.loads(blob.splitlines()[0])["sessionId"]
+    sid = _upload(client, respx_mock, blob, "claude-code")
+    r = client.get(f"/api/traces/{sid}/export/claude")
+    assert r.status_code == 200
+    assert r.headers["x-vibeshub-filename"] == f"{inner_id}.jsonl"
+    assert r.headers["x-vibeshub-session-uuid"] == inner_id
+    assert json.loads(r.content.splitlines()[0])["sessionId"] == inner_id
+
+
+def test_claude_verbatim_without_a_session_id_still_exports(
+    client, respx_mock,
+):
+    """Records that carry no sessionId leave nothing to name the file after,
+    so the derived id keeps the endpoint total rather than 422-ing."""
+    blob = b"".join(
+        json.dumps({
+            "type": "user", "uuid": f"u{i}", "parentUuid": None,
+            "message": {"role": "user", "content": "hi"},
+        }).encode() + b"\n"
+        for i in range(2)
+    )
+    sid = _upload(client, respx_mock, blob, "claude-code")
+    r = client.get(f"/api/traces/{sid}/export/claude")
+    assert r.status_code == 200
+    name = r.headers["x-vibeshub-filename"]
+    assert name == f"{uuid.UUID(name.removesuffix('.jsonl'))}.jsonl"
+
+
+def test_git_branch_header_is_sanitized_and_keeps_slashes(
+    client, respx_mock,
+):
+    """The branch is uploader-supplied, so it is sanitized on the way out.
+    Slashes survive: feature/x is an ordinary branch and the importer needs
+    the real name to offer a checkout."""
+    from app.api.traces import _safe_branch_token
+
+    sid = _upload(
+        client, respx_mock, CLAUDE_FIXTURE.read_bytes(), "claude-code",
+        git_branch="feature/port",
+    )
+    r = client.get(f"/api/traces/{sid}/export/codex")
+    assert r.headers["x-vibeshub-git-branch"] == "feature/port"
+    assert _safe_branch_token("main\r\nX-Evil: 1") == "main__X-Evil__1"
 
 
 def test_codex_native_to_codex_is_verbatim_with_original_filename(

@@ -14,9 +14,16 @@ from typing import Any
 
 from app.codex_convert import _parse_exec_output, _s
 
+# Placeholder for a tool call the rollout never recorded an output for. The
+# reverse direction (claude_to_codex_rollout) uses the same wording; the two
+# converters stay independent, so the string is stated in both.
+_MISSING_OUTPUT = "(tool result not recorded)"
+
 
 def codex_to_claude_session(blob: bytes, *, session_id: str) -> bytes:
     records: list[dict] = []
+    call_ids: list[str] = []
+    result_ids: set[str] = set()
     n = 0
     prev_uuid: str | None = None
     model: str | None = None
@@ -119,12 +126,14 @@ def codex_to_claude_session(blob: bytes, *, session_id: str) -> bytes:
                     name, inp = "Bash", {"command": _s(args.get("cmd"))}
                 else:
                     name, inp = raw_name, args
+            call_ids.append(call_id)
             envelope("assistant", ts, assistant_msg([{
                 "type": "tool_use", "id": call_id, "name": name,
                 "input": inp,
             }]))
         elif pt in ("function_call_output", "custom_tool_call_output"):
             call_id = _s(payload.get("call_id"))
+            result_ids.add(call_id)
             body, exit_code = _parse_exec_output(_s(payload.get("output")))
             tool_use_result: dict[str, Any] = {"stdout": body}
             if exit_code is not None:
@@ -138,6 +147,24 @@ def codex_to_claude_session(blob: bytes, *, session_id: str) -> bytes:
                 }],
             }, extra={"toolUseResult": tool_use_result})
         # reasoning items are dropped by design (encrypted, see spec).
+
+    # An interrupted rollout ends on a function_call whose output was never
+    # written. Claude Code resume replays the transcript to the Messages API,
+    # which rejects a tool_use with no matching tool_result, so pair the
+    # leftovers up in emission order (mirrors claude_to_codex_rollout).
+    if records:
+        last_ts = records[-1]["timestamp"]
+        for call_id in call_ids:
+            if call_id in result_ids:
+                continue
+            result_ids.add(call_id)
+            envelope("user", last_ts, {
+                "role": "user",
+                "content": [{
+                    "type": "tool_result", "tool_use_id": call_id,
+                    "content": _MISSING_OUTPUT, "is_error": False,
+                }],
+            }, extra={"toolUseResult": {"stdout": _MISSING_OUTPUT}})
 
     body = "\n".join(
         json.dumps(r, ensure_ascii=False, separators=(",", ":"))

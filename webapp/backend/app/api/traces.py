@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import secrets
 import uuid as uuid_mod
@@ -407,6 +408,7 @@ async def _claude_shaped(
     raw_key: str,
     converted_key: str,
     source_format: str | None,
+    raw: bytes | None = None,
 ) -> bytes:
     """Claude-shaped bytes for the viewer.
 
@@ -415,6 +417,9 @@ async def _claude_shaped(
     a source_format, so fall through to an in-memory conversion: sniff
     the raw bytes and convert, no storage writes. Everything else is
     already Claude-shaped and serves raw.
+
+    `raw` lets a caller that already holds the raw blob hand it over
+    instead of paying for a second fetch.
     """
     if source_format in IMPORTED_FORMATS:
         try:
@@ -423,7 +428,8 @@ async def _claude_shaped(
             pass
     # Legacy-only path: converts per request, deliberately un-cached and
     # never backfilled to storage.
-    raw = await blob_store.get(raw_key)
+    if raw is None:
+        raw = await blob_store.get(raw_key)
     return convert_imported(raw) or raw
 
 
@@ -511,6 +517,7 @@ def _git_meta(trace: Trace) -> dict | None:
 
 
 _UNSAFE_HEADER_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+_UNSAFE_BRANCH_CHARS = re.compile(r"[^A-Za-z0-9._/-]")
 
 
 def _safe_header_token(value: str, *, limit: int = 200) -> str:
@@ -532,6 +539,48 @@ def _safe_filename(name: str) -> str:
     if not dot:
         return _safe_header_token(name)
     return f"{_safe_header_token(stem)}.{_safe_header_token(ext, limit=16)}"
+
+
+def _safe_branch_token(value: str, *, limit: int = 255) -> str:
+    """`_safe_header_token` for a git branch name.
+
+    The branch is uploader-supplied and stored verbatim, so it gets the same
+    treatment (CR/LF above all can never reach a response header). It keeps
+    "/" because feature/foo is an ordinary branch name and the importer needs
+    it intact; the plugin re-validates against git's ref rules before the
+    value goes anywhere near a repo.
+    """
+    return _UNSAFE_BRANCH_CHARS.sub("_", value)[:limit]
+
+
+# Enough lines to clear the leading summary/meta records real sessions carry
+# before the first envelope; scanning the whole blob would cost a JSON parse
+# per line on every export.
+_SESSION_ID_SCAN_LINES = 50
+
+
+def claude_session_id_from_blob(blob: bytes) -> str | None:
+    """The sessionId the records in a Claude-shaped blob already carry.
+
+    Claude Code pairs a session file with the sessionId written inside it, so
+    a verbatim export has to be named after this value rather than after any
+    id the trace row happens to hold. None when no early record carries a
+    uuid-shaped sessionId.
+    """
+    for line in blob.split(b"\n")[:_SESSION_ID_SCAN_LINES]:
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(rec, dict) or not rec.get("sessionId"):
+            continue
+        try:
+            return str(uuid_mod.UUID(str(rec["sessionId"])))
+        except ValueError:
+            return None
+    return None
 
 
 def _export_claude_session_id(trace: Trace) -> str:
@@ -672,6 +721,7 @@ async def export_trace(
                 raw_key=f"{trace.blob_prefix}main.jsonl",
                 converted_key=f"{trace.blob_prefix}converted.jsonl",
                 source_format=src,
+                raw=raw,
             )
             data = claude_to_codex_rollout(
                 claude_shaped,
@@ -690,12 +740,20 @@ async def export_trace(
             raise HTTPException(
                 status_code=422, detail="cursor_to_claude_unsupported"
             )
-        session_uuid = _export_claude_session_id(trace)
         if src == "codex":
+            session_uuid = _export_claude_session_id(trace)
             data = codex_to_claude_session(raw, session_id=session_uuid)
         else:
             # src was sniffed above, so reaching here means the stored bytes
-            # really are Claude-shaped and go out untouched.
+            # really are Claude-shaped and go out untouched. They must be
+            # named after the sessionId they carry, since that is what resume
+            # pairs the filename with; a web upload has no session id of its
+            # own, and the derived fallback only covers blobs that carry no
+            # sessionId at all.
+            session_uuid = _safe_header_token(
+                claude_session_id_from_blob(raw)
+                or _export_claude_session_id(trace)
+            )
             data = raw
         filename = f"{session_uuid}.jsonl"
 
@@ -711,7 +769,9 @@ async def export_trace(
         "X-Vibeshub-Session-Uuid": session_uuid,
     }
     if trace.git_branch:
-        headers["X-Vibeshub-Git-Branch"] = trace.git_branch
+        headers["X-Vibeshub-Git-Branch"] = _safe_branch_token(
+            trace.git_branch
+        )
     if trace.git_commit:
         headers["X-Vibeshub-Git-Commit"] = trace.git_commit
     if trace.repo_full_name:

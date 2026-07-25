@@ -56,6 +56,49 @@ def test_exec_command_maps_to_bash_with_paired_result():
     assert {u["id"] for u in uses} >= result_ids and result_ids
 
 
+def test_dangling_tool_call_gets_a_placeholder_result():
+    """An interrupted rollout ends on a function_call whose output was never
+    written. The Messages API rejects a trailing tool_use with no tool_result,
+    so resume would fail unless the export pairs the leftovers up."""
+    blob = b"\n".join([
+        b'{"timestamp":"t1","type":"event_msg","payload":'
+        b'{"type":"user_message","message":"run it"}}',
+        b'{"timestamp":"t2","type":"response_item","payload":'
+        b'{"type":"function_call","name":"exec_command","call_id":"call-1",'
+        b'"arguments":"{\\"cmd\\":\\"ls\\"}"}}',
+    ])
+    recs = [json.loads(line)
+            for line in codex_to_claude_session(blob, session_id=SID)
+            .splitlines() if line.strip()]
+    assert len(recs) == 3
+    last = recs[-1]
+    assert last["type"] == "user"
+    assert last["message"]["content"] == [{
+        "type": "tool_result", "tool_use_id": "call-1",
+        "content": "(tool result not recorded)", "is_error": False,
+    }]
+    assert last["toolUseResult"] == {"stdout": "(tool result not recorded)"}
+    # Timestamp borrowed from the last real record; chain still intact.
+    assert last["timestamp"] == "t2"
+    assert last["parentUuid"] == recs[-2]["uuid"]
+    assert last["sessionId"] == SID
+
+
+def test_paired_tool_calls_are_not_padded_twice():
+    """Every tool_use in a complete rollout already has its result, so the
+    dangling-call pass must add nothing."""
+    recs = _records()
+    uses = [b for r in recs if r["type"] == "assistant"
+            for b in r["message"]["content"] if b["type"] == "tool_use"]
+    results = [b for r in recs if r["type"] == "user"
+               for b in r["message"]["content"]
+               if isinstance(b, dict) and b.get("type") == "tool_result"]
+    assert len(results) == len(uses)
+    assert not any(
+        b["content"] == "(tool result not recorded)" for b in results
+    )
+
+
 def test_malformed_records_are_skipped_not_raised():
     """Uploaded bytes are untrusted: bad shapes drop records, never raise."""
     blob = b"\n".join([
@@ -80,9 +123,10 @@ def test_malformed_records_are_skipped_not_raised():
     # The malformed exec_command still converts (non-dict args -> {}); only
     # the unusable records drop out. A non-str output_text is one of them:
     # emitting it raw would produce a non-Anthropic-shaped text block.
-    assert [r["message"].get("content") for r in recs if r["type"] == "user"] \
-        == ["survivor"]
-    assert len(recs) == 2
+    assert [r["message"]["content"] for r in recs
+            if isinstance(r["message"]["content"], str)] == ["survivor"]
+    # tool_use, prompt, and the placeholder result the unpaired call needs.
+    assert len(recs) == 3
 
 
 def test_unconvertible_input_returns_empty_bytes():
