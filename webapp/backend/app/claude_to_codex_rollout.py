@@ -76,7 +76,10 @@ def rollout_filename(session_uuid: str, first_ts: str) -> str:
     return f"rollout-{stamp}-{session_uuid}.jsonl"
 
 
-def rollout_filename_from_blob(blob: bytes) -> str | None:
+def _first_session_meta(blob: bytes) -> tuple[dict, dict] | None:
+    """`(record, payload)` when the blob's first line is a session_meta
+    carrying a string id, None otherwise. Shared by the two public
+    accessors below so they can never disagree about what a rollout is."""
     nl = blob.find(b"\n")
     first = (blob if nl == -1 else blob[:nl]).strip()
     try:
@@ -88,6 +91,22 @@ def rollout_filename_from_blob(blob: bytes) -> str | None:
     payload = rec.get("payload")
     if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
         return None
+    return rec, payload
+
+
+def rollout_session_id_from_blob(blob: bytes) -> str | None:
+    """The rollout's own session id, verbatim, or None when the blob does
+    not open with a usable session_meta. Callers that need the id must read
+    it from here rather than slicing it back out of the filename."""
+    parsed = _first_session_meta(blob)
+    return None if parsed is None else parsed[1]["id"]
+
+
+def rollout_filename_from_blob(blob: bytes) -> str | None:
+    parsed = _first_session_meta(blob)
+    if parsed is None:
+        return None
+    rec, payload = parsed
     ts = payload.get("timestamp") or rec.get("timestamp") or _EPOCH_TS
     return rollout_filename(payload["id"], str(ts))
 

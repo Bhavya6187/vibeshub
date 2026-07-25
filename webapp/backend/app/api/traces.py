@@ -16,14 +16,15 @@ from app.api.trace_service import resolve_association
 from app.claude_to_codex_rollout import (
     claude_to_codex_rollout,
     rollout_filename_from_blob,
+    rollout_session_id_from_blob,
     uuid7_from,
 )
 from app.codex_to_claude_session import codex_to_claude_session
-from app.convert import IMPORTED_FORMATS, convert_imported
+from app.convert import IMPORTED_FORMATS, convert_imported, sniff_import_format
 from app.redact.bundle import AGENT_ID_RE
 from app.auth.crypto import TokenCipher
 from app.auth.scopes import has_repo_scope
-from app.auth.github import GitHubAuthError, GitHubClient
+from app.auth.github import GitHubAPIError, GitHubAuthError, GitHubClient
 from app.auth.sessions import get_current_user
 from app.deps import (
     get_app_settings,
@@ -509,19 +510,28 @@ def _git_meta(trace: Trace) -> dict | None:
     return git or None
 
 
-_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+_UNSAFE_HEADER_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_header_token(value: str, *, limit: int = 200) -> str:
+    """A response-header-safe token.
+
+    A Codex export's filename and session id both come from the uploaded
+    rollout's own session_meta, so they are attacker-controlled: anything
+    outside a conservative set (CR/LF above all, which would otherwise
+    inject response headers) becomes an underscore, and the result is
+    length-capped. Well-formed values are unchanged.
+    """
+    return _UNSAFE_HEADER_CHARS.sub("_", value)[:limit]
 
 
 def _safe_filename(name: str) -> str:
-    """A response-header-safe download filename.
-
-    A Codex export filename is built from the uploaded rollout's own
-    session_meta id and timestamp, so it is attacker-controlled: anything
-    outside a conservative set (CR/LF above all, which would otherwise
-    inject response headers) becomes an underscore, and the whole name is
-    capped. Well-formed rollout filenames are unchanged.
-    """
-    return _UNSAFE_FILENAME_CHARS.sub("_", name)[:200]
+    """`_safe_header_token` applied to a filename, capping the stem so the
+    extension always survives (downstream readers key off ".jsonl")."""
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        return _safe_header_token(name)
+    return f"{_safe_header_token(stem)}.{_safe_header_token(ext, limit=16)}"
 
 
 def _export_claude_session_id(trace: Trace) -> str:
@@ -561,6 +571,12 @@ async def _require_export_access(
     except GitHubAuthError:
         raise HTTPException(
             status_code=401, detail="auth_required", headers=no_store
+        )
+    except GitHubAPIError:
+        # GitHub itself is unhappy (5xx, rate limit). That is not a verdict
+        # on this token, so surface it as upstream rather than as a denial.
+        raise HTTPException(
+            status_code=502, detail="github_upstream_error", headers=no_store
         )
     if trace.repo_full_name is None:
         if trace.owner_login != gh_user.login:
@@ -628,19 +644,25 @@ async def export_trace(
         )
 
     raw = await blob_store.get(f"{trace.blob_prefix}main.jsonl")
-    src = trace.source_format  # None means already Claude-shaped
+    src = trace.source_format
+    if src is None:
+        # A NULL column means "Claude-shaped" only for rows uploaded after
+        # source_format existed. Legacy rows predate it and may still hold
+        # codex/cursor native bytes, which must never be exported as a
+        # Claude session, so trust the bytes over the NULL.
+        src = sniff_import_format(raw)
     session_uuid: str
     if target == "codex":
         if src == "codex":
             data = raw
+            session_id = rollout_session_id_from_blob(raw)
             filename = rollout_filename_from_blob(raw)
-            if filename is None:
+            if session_id is None or filename is None:
                 raise HTTPException(
                     status_code=422, detail="unconvertible_trace"
                 )
+            session_uuid = _safe_header_token(session_id)
             filename = _safe_filename(filename)
-            # The stem ends with the original rollout's 36-char session id.
-            session_uuid = filename[:-len(".jsonl")][-36:]
         else:
             session_uuid = uuid7_from(
                 int(trace.created_at.timestamp() * 1000), trace.short_id
@@ -672,6 +694,8 @@ async def export_trace(
         if src == "codex":
             data = codex_to_claude_session(raw, session_id=session_uuid)
         else:
+            # src was sniffed above, so reaching here means the stored bytes
+            # really are Claude-shaped and go out untouched.
             data = raw
         filename = f"{session_uuid}.jsonl"
 

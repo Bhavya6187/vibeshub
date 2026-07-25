@@ -10,6 +10,7 @@ from app.claude_to_codex_rollout import (
     claude_to_codex_rollout,
     rollout_filename,
     rollout_filename_from_blob,
+    rollout_session_id_from_blob,
     uuid7_from,
 )
 
@@ -147,6 +148,29 @@ def test_rollout_filename_from_blob_roundtrip():
     name = rollout_filename_from_blob(out)
     assert name is not None and SESSION_UUID in name
     assert rollout_filename_from_blob(b"not json\n") is None
+
+
+def test_rollout_session_id_from_blob():
+    raw = (FIXTURES / "claude_export" / "sample.jsonl").read_bytes()
+    out = claude_to_codex_rollout(raw, session_uuid=SESSION_UUID)
+    assert rollout_session_id_from_blob(out) == SESSION_UUID
+    assert rollout_session_id_from_blob(b"not json\n") is None
+
+
+def test_rollout_session_id_is_verbatim_not_derived_from_the_filename():
+    """Ids of any shape round-trip whole. The export endpoint puts this in
+    a response header, so a fixed-width slice of the filename would garble
+    anything that is not a 36-char uuid."""
+    native = (FIXTURES / "codex" / "rollout.jsonl").read_bytes()
+    assert rollout_session_id_from_blob(native) == json.loads(
+        native.splitlines()[0]
+    )["payload"]["id"]
+    short = b'{"type":"session_meta","payload":{"id":"tiny"}}\n{"x":1}\n'
+    assert rollout_session_id_from_blob(short) == "tiny"
+    # A session_meta with no usable id is not a rollout for either accessor.
+    no_id = b'{"type":"session_meta","payload":{"id":7}}\n'
+    assert rollout_session_id_from_blob(no_id) is None
+    assert rollout_filename_from_blob(no_id) is None
 
 
 def test_conversion_matches_golden():
