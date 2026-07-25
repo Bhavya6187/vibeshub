@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional
 
 from vibeshub_client.bundle import build_bundle
+from vibeshub_client.git_info import git_info
 from vibeshub_client.post_comment import build_comment_body, post_pr_comment
 from vibeshub_client.redact import redact_jsonl
 from vibeshub_client.upload import UploadError, upload_bundle
@@ -20,6 +22,29 @@ def _platform_label(platform_id: str) -> str:
     if platform_id == "cursor":
         return "Cursor"
     return "Claude Code"
+
+
+def _header_safe(value: str | None) -> str | None:
+    """None unless `value` can ride an HTTP header, which is latin-1 on the
+    wire. An exotic branch name is never worth failing a share over."""
+    if value is None:
+        return None
+    try:
+        value.encode("latin-1")
+    except UnicodeEncodeError:
+        return None
+    return value
+
+
+def _capture_git_info(hook_input: dict) -> tuple[str | None, str | None]:
+    """Best-effort (branch, commit) for the session's working directory.
+    Never raises: git is an optional detail, the trace is the payload."""
+    try:
+        branch, commit = git_info(hook_input.get("cwd") or os.getcwd())
+    except Exception:
+        log.debug("git info capture failed", exc_info=True)
+        return None, None
+    return _header_safe(branch), _header_safe(commit)
 
 
 @dataclass
@@ -58,6 +83,8 @@ async def run_share_pipeline(
     tar_bytes, report = build_bundle(paths.main_jsonl, agents, redact=redact_jsonl)
     payload_bytes = len(tar_bytes)
 
+    git_branch, git_commit = _capture_git_info(hook_input)
+
     started = time.monotonic()
     try:
         result = await upload_bundle(
@@ -70,6 +97,8 @@ async def run_share_pipeline(
             session_id=options.session_id,
             redaction_count_client=report.total(),
             platform=reader.platform_id(),
+            git_branch=git_branch,
+            git_commit=git_commit,
         )
     except UploadError as e:
         return RunResult(

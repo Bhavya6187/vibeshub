@@ -11,7 +11,7 @@
 <!-- BADGES -->
 <p align="center">
   <a href="https://vibeshub.ai"><img alt="deploy" src="https://img.shields.io/badge/deploy-vibeshub.ai-3fb950"></a>
-  <img alt="version" src="https://img.shields.io/badge/version-v0.5.2-1f6feb" title="Single product version (plugin + webapp)">
+  <img alt="version" src="https://img.shields.io/badge/version-v0.6.0-1f6feb" title="Single product version (plugin + webapp)">
   <img alt="platforms" src="https://img.shields.io/badge/platforms-3-D07843">
   <img alt="python" src="https://img.shields.io/badge/python-plugin%203.9%2B%20%7C%20backend%203.12%E2%80%933.13-8957e5">
   <img alt="license" src="https://img.shields.io/badge/license-MIT-6e7681">

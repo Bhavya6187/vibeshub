@@ -1,7 +1,7 @@
 {
   "name": "vibeshub",
   "description": "Upload your Cursor agent conversation traces to vibeshub when you open or update a pull request.",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "author": {
     "name": "vibeshub",
     "email": "bhavya@vibeshub.ai",

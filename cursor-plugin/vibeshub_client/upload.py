@@ -184,6 +184,8 @@ async def upload_bundle(
     redaction_count_client: int,
     platform: str = "claude-code",
     timeout: float = 60.0,
+    git_branch: str | None = None,
+    git_commit: str | None = None,
 ) -> UploadResult:
     url = f"{server_url.rstrip('/')}/api/ingest"
     headers = {
@@ -202,6 +204,10 @@ async def upload_bundle(
         headers["X-Vibeshub-Repo"] = repo_full_name
     if session_id:
         headers["X-Vibeshub-Session-Id"] = session_id
+    if git_branch:
+        headers["X-Vibeshub-Git-Branch"] = git_branch
+    if git_commit:
+        headers["X-Vibeshub-Git-Commit"] = git_commit
 
     status, raw = await asyncio.to_thread(
         _post_bytes, url, headers=headers, body=tar_bytes, timeout=timeout,

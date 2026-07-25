@@ -1,6 +1,6 @@
 [project]
 name = "vibeshub-claude-code-plugin"
-version = "0.5.2"
+version = "0.6.0"
 description = "Claude Code plugin glue for vibeshub"
 requires-python = ">=3.9"
 dependencies = []
