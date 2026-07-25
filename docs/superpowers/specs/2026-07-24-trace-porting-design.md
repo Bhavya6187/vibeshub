@@ -155,10 +155,16 @@ tracebacks.
 
 Motivation: a ported session is grounded in a repo state; the importer
 needs enough metadata to get there. Two constraints shape the design.
-First, redaction's entropy pass destroys long hex in stored blobs, so any
-in-transcript commit SHA (including Codex's `session_meta.git.commit_hash`)
-is gone by the time the server has the trace, and redaction is byte-level,
-never JSON-aware, so the field cannot be exempted. Second, unpushed
+First, redaction destroys full commit SHAs in stored blobs: the
+`aws_secret_access_key` pattern (both client and server redactors)
+matches any quote- or space-bounded 40-char alphanumeric run, which is
+every full git SHA, including Codex's `session_meta.git.commit_hash` and
+`git log` tool output (verified empirically 2026-07-24 against both
+redactors; the entropy pass is irrelevant here since hex entropy caps at
+exactly the 4.0-bit threshold). Abbreviated SHAs and SHAs embedded in
+URLs survive, but nothing reliable enough to anchor an import. Redaction
+is byte-level, never JSON-aware, so the field cannot be exempted as a
+field; see Risks for a possible pattern-level fix. Second, unpushed
 commits and dirty files are not in the trace at all, so a true
 working-tree restore is impossible by construction.
 
@@ -219,3 +225,11 @@ Import-verb repo-state behavior (check always, mutate only on opt-in):
   is part of e2e.
 - **Anthropic API tolerance on resumed foreign history** is already
   de-risked by the 2026-07-24 verification.
+- **Optional redaction refinement (separate decision):** exempting
+  pure-hex 40-char matches from the `aws_secret_access_key` pattern would
+  preserve git SHAs in blobs (real AWS secrets are base64-class and
+  virtually never pure hex). Trade-off: legacy 40-hex credentials (e.g.
+  pre-`ghp_` GitHub tokens) would no longer be caught. Not required for
+  this feature since plugin-side capture sidesteps redaction, but it
+  would keep SHAs readable in tool outputs and in verbatim Codex
+  exports.
