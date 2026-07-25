@@ -7,7 +7,8 @@ argument-hint: "<trace-url-or-short-id> --to codex|claude [--checkout]"
 Download a trace from vibeshub and place it where the target CLI keeps its
 sessions, then print the exact resume command.
 
-- `--to codex` writes a rollout under ~/.codex/sessions; resume with
+- `--to codex` writes a rollout under your Codex home (`~/.codex` by default,
+  `CODEX_HOME` is honored), in its `sessions/` tree; resume with
   `codex resume <session-id>`.
 - `--to claude` writes a session for the current project directory; resume
   with `claude --resume <session-id>`.

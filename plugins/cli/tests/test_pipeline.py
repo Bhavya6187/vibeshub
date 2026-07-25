@@ -339,6 +339,21 @@ async def test_pipeline_sends_git_branch_and_commit(tmp_path):
     assert len(captured["git_commit"]) == 40
 
 
+def test_capture_git_info_falls_back_to_workspace_root(tmp_path):
+    """Cursor's afterShellExecution payload carries no cwd and the hook runs
+    from ~/.cursor, so without the workspace_roots fallback the branch would
+    be read from whatever repo happens to sit at the hook's cwd."""
+    from vibeshub_client.pipeline import _capture_git_info
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo, "feature/port")
+
+    branch, commit = _capture_git_info({"workspace_roots": [str(repo)]})
+    assert branch == "feature/port"
+    assert commit is not None and len(commit) == 40
+
+
 def test_capture_git_info_survives_git_failure():
     """Git capture is best effort: a share must never fail because git did."""
     from vibeshub_client.pipeline import _capture_git_info

@@ -36,11 +36,25 @@ def _header_safe(value: str | None) -> str | None:
     return value
 
 
+def _git_dir(hook_input: dict) -> str:
+    """The directory git metadata describes. Claude Code and Codex payloads
+    carry `cwd`; Cursor's afterShellExecution payload has none (and the hook
+    process runs from `~/.cursor`, outside any repo), so fall back to the
+    first workspace root before the process cwd. Mirrors `_repo_dir` in
+    hooks/on-pr-share.py."""
+    if hook_input.get("cwd"):
+        return hook_input["cwd"]
+    roots = hook_input.get("workspace_roots")
+    if isinstance(roots, list) and roots:
+        return roots[0]
+    return os.getcwd()
+
+
 def _capture_git_info(hook_input: dict) -> tuple[str | None, str | None]:
     """Best-effort (branch, commit) for the session's working directory.
     Never raises: git is an optional detail, the trace is the payload."""
     try:
-        branch, commit = git_info(hook_input.get("cwd") or os.getcwd())
+        branch, commit = git_info(_git_dir(hook_input))
     except Exception:
         log.debug("git info capture failed", exc_info=True)
         return None, None

@@ -29,7 +29,8 @@ all platforms call the shared `run_share_pipeline()`.
 
 ## Ingest headers
 
-Every platform posts the trace bundle as raw tar bytes to `POST /api/ingest`,
+Every platform posts the trace bundle as gzipped tar bytes as the raw request
+body to `POST /api/ingest`,
 authenticated with `Authorization: Bearer <gh auth token>`. All metadata travels
 in headers:
 

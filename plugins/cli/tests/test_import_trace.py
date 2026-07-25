@@ -50,6 +50,57 @@ def test_claude_dest_encodes_cwd():
     assert str(p) == "/x/.claude/projects/-Users-y-repo/abc-def.jsonl"
 
 
+def test_codex_dest_rejects_path_escaping_filename():
+    """The filename comes from a server header, so it is untrusted: the date
+    prefix must not be a licence to walk out of the sessions tree."""
+    for name in (
+        "rollout-2026-07-24T18-00-00-../../../../tmp/pwn.jsonl",
+        "rollout-2026-07-24T18-00-00-sub/dir.jsonl",
+        "rollout-2026-07-24T18-00-00-..\\..\\pwn.jsonl",
+    ):
+        with pytest.raises(ImportTraceError) as exc:
+            codex_dest(Path("/x/.codex"), name)
+        assert "unexpected rollout filename" in str(exc.value)
+
+
+def test_claude_dest_rejects_path_escaping_session_uuid():
+    for bad in ("../../../../tmp/pwn", "a/b", "..", "", "a\\b"):
+        with pytest.raises(ImportTraceError):
+            claude_dest(Path("/x/.claude"), "/Users/y/repo", bad)
+
+
+def test_run_import_traversal_filename_writes_nothing(monkeypatch, tmp_path):
+    home = tmp_path / ".codex"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    _stub_fetch(monkeypatch, (b"x\n", {
+        "x-vibeshub-filename":
+            "rollout-2026-07-24T18-00-00-../../../../pwn.jsonl",
+        "x-vibeshub-session-uuid": str(uuid.uuid4()),
+    }))
+    with pytest.raises(ImportTraceError):
+        run_import(
+            "abc123", "codex", server="https://vibeshub.ai",
+            cwd=str(tmp_path), checkout=False,
+        )
+    assert list(tmp_path.rglob("*.jsonl")) == []
+
+
+def test_run_import_traversal_session_uuid_writes_nothing(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / ".claude"))
+    _stub_fetch(monkeypatch, (b"x\n", {
+        "x-vibeshub-filename": "whatever.jsonl",
+        "x-vibeshub-session-uuid": "../../../../pwn",
+    }))
+    with pytest.raises(ImportTraceError):
+        run_import(
+            "abc123", "claude", server="https://vibeshub.ai",
+            cwd=str(tmp_path), checkout=False,
+        )
+    assert list(tmp_path.rglob("*.jsonl")) == []
+
+
 def test_re_id_codex_rewrites_session_meta_only():
     old, new = str(uuid.uuid4()), str(uuid.uuid4())
     blob = (

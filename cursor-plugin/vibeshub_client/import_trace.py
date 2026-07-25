@@ -14,6 +14,9 @@ from urllib.parse import urlsplit
 _ROLLOUT_RE = re.compile(
     r"^rollout-(\d{4})-(\d{2})-(\d{2})T\d{2}-\d{2}-\d{2}-.+\.jsonl$"
 )
+# A session id is a uuid in practice; this is the widest shape that can never
+# name a parent directory or a separator.
+_SESSION_UUID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class ImportTraceError(Exception):
@@ -95,6 +98,11 @@ def fetch_export(
 
 
 def codex_dest(codex_home: Path, filename: str) -> Path:
+    # The filename arrives in a server header, so it is untrusted: the
+    # rollout pattern's free tail would otherwise accept separators and walk
+    # the write out of the sessions tree.
+    if any(bad in filename for bad in ("/", "\\", "..")):
+        raise ImportTraceError(f"unexpected rollout filename: {filename}")
     m = _ROLLOUT_RE.match(filename)
     if not m:
         raise ImportTraceError(f"unexpected rollout filename: {filename}")
@@ -103,6 +111,11 @@ def codex_dest(codex_home: Path, filename: str) -> Path:
 
 
 def claude_dest(claude_home: Path, cwd: str, session_uuid: str) -> Path:
+    # Same story as codex_dest: the session id is server-supplied and becomes
+    # a filename, so anything that could climb out of the project dir is a
+    # bad response, not a session.
+    if not _SESSION_UUID_RE.match(session_uuid) or ".." in session_uuid:
+        raise ImportTraceError(f"unexpected session id: {session_uuid}")
     encoded = cwd.replace("/", "-")
     return claude_home / "projects" / encoded / f"{session_uuid}.jsonl"
 
@@ -150,6 +163,17 @@ def re_id_claude(blob: bytes, new_uuid: str) -> bytes:
     return b"\n".join(out)
 
 
+def _assert_inside(dest: Path, home: Path) -> None:
+    """Last line of defence before a write: whatever the header said, the
+    resolved destination has to sit inside the CLI's own home."""
+    resolved, root = dest.resolve(), home.resolve()
+    # is_relative_to: Python 3.9+, the plugin's floor.
+    if not resolved.is_relative_to(root):
+        raise ImportTraceError(
+            f"refusing to write outside {root}: {resolved}"
+        )
+
+
 def place(dest: Path, blob: bytes) -> Path:
     if dest.exists():
         raise FileExistsError(str(dest))
@@ -194,6 +218,7 @@ def run_import(
             session_uuid, filename = new_uuid, new_name
             dest = codex_dest(codex_home, filename)
             print(f"session already imported; re-id as {new_uuid}")
+        _assert_inside(dest, codex_home)
         place(dest, blob)
         resume = f"codex resume {session_uuid}"
     elif target == "claude":
@@ -207,6 +232,7 @@ def run_import(
             session_uuid = new_uuid
             dest = claude_dest(claude_home, cwd, session_uuid)
             print(f"session already imported; re-id as {new_uuid}")
+        _assert_inside(dest, claude_home)
         place(dest, blob)
         resume = f"claude --resume {session_uuid}"
     else:
