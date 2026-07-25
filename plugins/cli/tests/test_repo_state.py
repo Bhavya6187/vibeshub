@@ -51,6 +51,37 @@ def test_matching_branch_and_commit_reports_ok(tmp_path):
     assert any("matches" in l.lower() for l in lines)
 
 
+def test_default_never_moves_the_working_tree(tmp_path):
+    """The core invariant: without checkout=True nothing is mutated, even
+    when the branch exists and the tree is clean."""
+    repo = _repo(tmp_path)
+    _git(repo, "branch", "feature/y")
+    repo_state_report({"x-vibeshub-git-branch": "feature/y"}, str(repo))
+    current = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=repo,
+        capture_output=True, text=True).stdout.strip()
+    assert current == "main"
+
+
+def test_checkout_skips_missing_branch(tmp_path):
+    repo = _repo(tmp_path)
+    lines = repo_state_report(
+        {"x-vibeshub-git-branch": "feature/gone"}, str(repo), checkout=True)
+    assert any("checkout skipped: branch" in l for l in lines)
+    current = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=repo,
+        capture_output=True, text=True).stdout.strip()
+    assert current == "main"
+
+
+def test_checkout_when_already_on_branch(tmp_path):
+    repo = _repo(tmp_path)
+    lines = repo_state_report(
+        {"x-vibeshub-git-branch": "main"}, str(repo), checkout=True)
+    assert any("already on" in l for l in lines)
+    assert not any("failed" in l or "skipped" in l for l in lines)
+
+
 def test_checkout_refuses_dirty_tree(tmp_path):
     repo = _repo(tmp_path)
     _git(repo, "branch", "feature/y")
@@ -106,6 +137,7 @@ def test_non_sha_commit_is_ignored(tmp_path):
     lines = repo_state_report(
         {"x-vibeshub-git-commit": "'; rm -rf ~"}, str(_repo(tmp_path)))
     assert not any("rm -rf" in l for l in lines)
+    assert any("ignoring" in l.lower() for l in lines)
 
 
 def test_non_git_dir_is_noted_not_crashed(tmp_path):

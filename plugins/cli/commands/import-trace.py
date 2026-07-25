@@ -43,7 +43,10 @@ def main() -> None:
             args.ref, args.target, server=server, cwd=os.getcwd(),
             checkout=args.checkout,
         ))
-    except (ImportTraceError, FileExistsError) as e:
+    # FileExistsError from place() is an OSError, and so is every other way
+    # writing the session can fail (unwritable home, ENOSPC): report them all
+    # as an import failure instead of a traceback.
+    except (ImportTraceError, OSError) as e:
         print(f"import failed: {e}", file=sys.stderr)
         sys.exit(1)
 
