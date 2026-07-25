@@ -8,7 +8,7 @@ team can see how a change was actually built.
 > [`vibeshub/vibeshub`](https://github.com/vibeshub/vibeshub) by
 > `scripts/sync-cursor-plugin.py`. Send changes there.
 
-Version: 0.5.2
+Version: 0.6.0
 
 ## What it does
 

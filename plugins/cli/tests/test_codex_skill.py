@@ -31,6 +31,27 @@ def test_share_trace_skill_documents_codex_slash_invocation():
     assert "Codex surfaces plugin skills" in text
 
 
+def test_import_trace_skill_is_packaged_for_codex():
+    skill = PLUGIN_ROOT / "skills" / "import-trace" / "SKILL.md"
+
+    text = skill.read_text()
+    assert "name: import-trace" in text
+    assert "commands/import-trace.py" in text
+    assert "/vibeshub:import-trace" in text
+    assert "--to codex" in text and "--to claude" in text
+    assert "--checkout" in text
+
+
+def test_import_trace_skill_uses_codex_native_helper_instructions():
+    skill = PLUGIN_ROOT / "skills" / "import-trace" / "SKILL.md"
+
+    text = skill.read_text()
+    assert "Resolve the plugin root" in text
+    assert "Do not use commands/import-trace.md" in text
+    assert "CLAUDE_PLUGIN_ROOT" not in text
+    assert "$ARGUMENTS" not in text
+
+
 def test_share_trace_skill_uses_codex_native_helper_instructions():
     skill = PLUGIN_ROOT / "skills" / "share-trace" / "SKILL.md"
 

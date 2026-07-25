@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -50,6 +51,8 @@ async def ingest(
     x_vibeshub_plugin_version: Annotated[str | None, Header()] = None,
     x_vibeshub_session_id: Annotated[str | None, Header()] = None,
     x_vibeshub_client_redactions: Annotated[str | None, Header()] = None,
+    x_vibeshub_git_branch: Annotated[str | None, Header()] = None,
+    x_vibeshub_git_commit: Annotated[str | None, Header()] = None,
     session: AsyncSession = Depends(get_session),
     blob_store: BlobStore = Depends(get_blob_store),
     github: GitHubClient = Depends(get_github),
@@ -99,6 +102,18 @@ async def ingest(
     except BundleError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Bad git metadata must never fail an upload: a commit that is not a full
+    # lowercase-hex SHA is dropped, and an over-long branch name is truncated.
+    git_commit = (
+        x_vibeshub_git_commit
+        if x_vibeshub_git_commit
+        and re.fullmatch(r"[0-9a-f]{40}", x_vibeshub_git_commit)
+        else None
+    )
+    git_branch = (x_vibeshub_git_branch or None)
+    if git_branch is not None:
+        git_branch = git_branch[:255]
+
     result = await create_or_update_trace(
         session=session,
         blob_store=blob_store,
@@ -113,6 +128,8 @@ async def ingest(
         pr_url=assoc.pr_url,
         pr_title=assoc.pr_title,
         is_private=assoc.is_private,
+        git_branch=git_branch,
+        git_commit=git_commit,
     )
     await session.commit()
 

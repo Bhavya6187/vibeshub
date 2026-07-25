@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 import secrets
+import uuid as uuid_mod
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
@@ -11,11 +14,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import AgentSummary, ClaimRequest, TraceSummary
 from app.api.trace_service import resolve_association
-from app.convert import IMPORTED_FORMATS, convert_imported
+from app.claude_to_codex_rollout import (
+    claude_to_codex_rollout,
+    rollout_filename_from_blob,
+    rollout_session_id_from_blob,
+    uuid7_from,
+)
+from app.codex_to_claude_session import codex_to_claude_session
+from app.convert import IMPORTED_FORMATS, convert_imported, sniff_import_format
 from app.redact.bundle import AGENT_ID_RE
 from app.auth.crypto import TokenCipher
 from app.auth.scopes import has_repo_scope
-from app.auth.github import GitHubAuthError, GitHubClient
+from app.auth.github import GitHubAPIError, GitHubAuthError, GitHubClient
 from app.auth.sessions import get_current_user
 from app.deps import (
     get_app_settings,
@@ -398,6 +408,7 @@ async def _claude_shaped(
     raw_key: str,
     converted_key: str,
     source_format: str | None,
+    raw: bytes | None = None,
 ) -> bytes:
     """Claude-shaped bytes for the viewer.
 
@@ -406,6 +417,9 @@ async def _claude_shaped(
     a source_format, so fall through to an in-memory conversion: sniff
     the raw bytes and convert, no storage writes. Everything else is
     already Claude-shaped and serves raw.
+
+    `raw` lets a caller that already holds the raw blob hand it over
+    instead of paying for a second fetch.
     """
     if source_format in IMPORTED_FORMATS:
         try:
@@ -414,7 +428,8 @@ async def _claude_shaped(
             pass
     # Legacy-only path: converts per request, deliberately un-cached and
     # never backfilled to storage.
-    raw = await blob_store.get(raw_key)
+    if raw is None:
+        raw = await blob_store.get(raw_key)
     return convert_imported(raw) or raw
 
 
@@ -483,6 +498,289 @@ async def get_trace_session(
     headers = (
         {"Cache-Control": "private, no-store"} if trace.is_private else None
     )
+    return Response(
+        content=data, media_type="application/x-ndjson", headers=headers
+    )
+
+
+def _git_meta(trace: Trace) -> dict | None:
+    git: dict = {}
+    if trace.git_branch:
+        git["branch"] = trace.git_branch
+    if trace.git_commit:
+        git["commit_hash"] = trace.git_commit
+    if trace.repo_full_name:
+        git["repository_url"] = (
+            f"https://github.com/{trace.repo_full_name}.git"
+        )
+    return git or None
+
+
+_UNSAFE_HEADER_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+_UNSAFE_BRANCH_CHARS = re.compile(r"[^A-Za-z0-9._/-]")
+
+
+def _safe_header_token(value: str, *, limit: int = 200) -> str:
+    """A response-header-safe token.
+
+    A Codex export's filename and session id both come from the uploaded
+    rollout's own session_meta, so they are attacker-controlled: anything
+    outside a conservative set (CR/LF above all, which would otherwise
+    inject response headers) becomes an underscore, and the result is
+    length-capped. Well-formed values are unchanged.
+    """
+    return _UNSAFE_HEADER_CHARS.sub("_", value)[:limit]
+
+
+def _safe_filename(name: str) -> str:
+    """`_safe_header_token` applied to a filename, capping the stem so the
+    extension always survives (downstream readers key off ".jsonl")."""
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        return _safe_header_token(name)
+    return f"{_safe_header_token(stem)}.{_safe_header_token(ext, limit=16)}"
+
+
+def _safe_branch_token(value: str, *, limit: int = 255) -> str:
+    """`_safe_header_token` for a git branch name.
+
+    The branch is uploader-supplied and stored verbatim, so it gets the same
+    treatment (CR/LF above all can never reach a response header). It keeps
+    "/" because feature/foo is an ordinary branch name and the importer needs
+    it intact; the plugin re-validates against git's ref rules before the
+    value goes anywhere near a repo.
+    """
+    return _UNSAFE_BRANCH_CHARS.sub("_", value)[:limit]
+
+
+# Enough lines to clear the leading summary/meta records real sessions carry
+# before the first envelope; scanning the whole blob would cost a JSON parse
+# per line on every export.
+_SESSION_ID_SCAN_LINES = 50
+
+
+def claude_session_id_from_blob(blob: bytes) -> str | None:
+    """The sessionId the records in a Claude-shaped blob already carry.
+
+    Claude Code pairs a session file with the sessionId written inside it, so
+    a verbatim export has to be named after this value rather than after any
+    id the trace row happens to hold. None when no early record carries a
+    uuid-shaped sessionId.
+    """
+    # Bounded split: a maxsplit keeps a 50MB blob from being materialized as
+    # a list of every line. The trailing remainder is not a single record, so
+    # it fails to parse and falls out of the loop.
+    for line in blob.split(b"\n", _SESSION_ID_SCAN_LINES):
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(rec, dict) or not rec.get("sessionId"):
+            continue
+        try:
+            return str(uuid_mod.UUID(str(rec["sessionId"])))
+        except ValueError:
+            return None
+    return None
+
+
+def _export_claude_session_id(trace: Trace) -> str:
+    """The sessionId a Claude-target export resumes under: the trace's own
+    session id when it is a real uuid, a stable derived one otherwise."""
+    try:
+        return str(uuid_mod.UUID(trace.session_id or ""))
+    except ValueError:
+        return str(uuid_mod.uuid5(
+            uuid_mod.NAMESPACE_URL,
+            f"vibeshub-claude-export:{trace.short_id}",
+        ))
+
+
+async def _require_export_access(
+    trace: Trace,
+    *,
+    user: User | None,
+    authorization: str | None,
+    github: GitHubClient,
+    settings: Settings,
+    access: RepoAccessChecker,
+) -> None:
+    """Cookie viewers use the normal gate; a GitHub bearer token (the
+    plugin's `gh auth token`) is accepted as an alternative identity."""
+    if not trace.is_private or user is not None:
+        await _require_trace_access(trace, user, settings, access)
+        return
+    no_store = {"Cache-Control": "no-store"}
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=401, detail="auth_required", headers=no_store
+        )
+    token = authorization.split(None, 1)[1].strip()
+    try:
+        gh_user = await github.verify_token(token)
+    except GitHubAuthError:
+        raise HTTPException(
+            status_code=401, detail="auth_required", headers=no_store
+        )
+    except GitHubAPIError:
+        # GitHub itself is unhappy (5xx, rate limit). That is not a verdict
+        # on this token, so surface it as upstream rather than as a denial.
+        raise HTTPException(
+            status_code=502, detail="github_upstream_error", headers=no_store
+        )
+    if trace.repo_full_name is None:
+        if trace.owner_login != gh_user.login:
+            raise HTTPException(
+                status_code=404, detail="not_found", headers=no_store
+            )
+        return
+    # The bearer identity has no local User row, so the per-viewer repo
+    # access cache is keyed by a stable pseudo id derived from the GitHub
+    # user id. A cache entry is never shared across GitHub accounts.
+    pseudo_id = uuid_mod.uuid5(
+        uuid_mod.NAMESPACE_URL, f"vibeshub-gh-user:{gh_user.id}"
+    )
+    try:
+        allowed = await access.can_read(
+            pseudo_id, token, trace.repo_full_name
+        )
+    except RepoAccessError:
+        raise HTTPException(
+            status_code=502, detail="github_upstream_error", headers=no_store
+        )
+    if not allowed:
+        raise HTTPException(
+            status_code=404, detail="not_found", headers=no_store
+        )
+
+
+@router.get("/api/traces/{short_id}/export/{target}")
+async def export_trace(
+    short_id: str,
+    target: str,
+    authorization: Annotated[str | None, Header()] = None,
+    session: AsyncSession = Depends(get_session),
+    blob_store: BlobStore = Depends(get_blob_store),
+    user: User | None = Depends(get_current_user),
+    settings: Settings = Depends(get_app_settings),
+    access: RepoAccessChecker = Depends(get_repo_access),
+    github: GitHubClient = Depends(get_github),
+):
+    """The trace as a resumable session file for `target`'s CLI.
+
+    A trace already native to `target` is served verbatim (its original
+    filename recovered where the format carries one); otherwise it is
+    converted on the fly. Cursor traces have no Claude target: the Cursor
+    import is view-grade only, so that pairing is refused rather than
+    served as a session that would not resume.
+    """
+    if target not in ("codex", "claude"):
+        raise HTTPException(status_code=404, detail="not found")
+    if not looks_like_short_id(short_id):
+        raise HTTPException(status_code=404, detail="not found")
+    stmt = select(Trace).where(
+        Trace.short_id == short_id, Trace.deleted_at.is_(None)
+    )
+    trace = (await session.execute(stmt)).scalar_one_or_none()
+    if trace is None:
+        raise HTTPException(status_code=404, detail="not found")
+    await _require_export_access(
+        trace, user=user, authorization=authorization,
+        github=github, settings=settings, access=access,
+    )
+    if trace.blob_prefix is None:
+        raise HTTPException(
+            status_code=500, detail="trace not migrated to v2 layout"
+        )
+
+    raw = await blob_store.get(f"{trace.blob_prefix}main.jsonl")
+    src = trace.source_format
+    if src is None:
+        # A NULL column means "Claude-shaped" only for rows uploaded after
+        # source_format existed. Legacy rows predate it and may still hold
+        # codex/cursor native bytes, which must never be exported as a
+        # Claude session, so trust the bytes over the NULL.
+        src = sniff_import_format(raw)
+    session_uuid: str
+    if target == "codex":
+        if src == "codex":
+            data = raw
+            session_id = rollout_session_id_from_blob(raw)
+            filename = rollout_filename_from_blob(raw)
+            if session_id is None or filename is None:
+                raise HTTPException(
+                    status_code=422, detail="unconvertible_trace"
+                )
+            session_uuid = _safe_header_token(session_id)
+            filename = _safe_filename(filename)
+        else:
+            session_uuid = uuid7_from(
+                int(trace.created_at.timestamp() * 1000), trace.short_id
+            )
+            claude_shaped = await _claude_shaped(
+                blob_store,
+                raw_key=f"{trace.blob_prefix}main.jsonl",
+                converted_key=f"{trace.blob_prefix}converted.jsonl",
+                source_format=src,
+                raw=raw,
+            )
+            data = claude_to_codex_rollout(
+                claude_shaped,
+                session_uuid=session_uuid,
+                git=_git_meta(trace),
+            )
+            filename = rollout_filename_from_blob(data)
+            if filename is None:
+                raise HTTPException(
+                    status_code=422, detail="unconvertible_trace"
+                )
+            # The stamp comes from the source transcript's own timestamp.
+            filename = _safe_filename(filename)
+    else:  # target == "claude"
+        if src == "cursor":
+            raise HTTPException(
+                status_code=422, detail="cursor_to_claude_unsupported"
+            )
+        if src == "codex":
+            session_uuid = _export_claude_session_id(trace)
+            data = codex_to_claude_session(raw, session_id=session_uuid)
+        else:
+            # src was sniffed above, so reaching here means the stored bytes
+            # really are Claude-shaped and go out untouched. They must be
+            # named after the sessionId they carry, since that is what resume
+            # pairs the filename with; a web upload has no session id of its
+            # own, and the derived fallback only covers blobs that carry no
+            # sessionId at all.
+            session_uuid = _safe_header_token(
+                claude_session_id_from_blob(raw)
+                or _export_claude_session_id(trace)
+            )
+            data = raw
+        filename = f"{session_uuid}.jsonl"
+
+    # A rollout carrying only reasoning (dropped by design) converts to
+    # nothing. It is a valid trace that cannot be ported, so refuse instead
+    # of handing the CLI an empty file to write.
+    if not data:
+        raise HTTPException(status_code=422, detail="unconvertible_trace")
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-Vibeshub-Filename": filename,
+        "X-Vibeshub-Session-Uuid": session_uuid,
+    }
+    if trace.git_branch:
+        headers["X-Vibeshub-Git-Branch"] = _safe_branch_token(
+            trace.git_branch
+        )
+    if trace.git_commit:
+        headers["X-Vibeshub-Git-Commit"] = trace.git_commit
+    if trace.repo_full_name:
+        headers["X-Vibeshub-Repo"] = trace.repo_full_name
+    if trace.is_private:
+        headers["Cache-Control"] = "private, no-store"
     return Response(
         content=data, media_type="application/x-ndjson", headers=headers
     )

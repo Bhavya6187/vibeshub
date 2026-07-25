@@ -284,6 +284,39 @@ async def test_upload_sends_plugin_user_agent():
     assert captured["headers"].get("User-agent") == "vibeshub-plugin/0.5.0"
 
 
+@pytest.mark.asyncio
+async def test_upload_sends_git_headers():
+    """Branch/commit are captured client-side at share time, so the uploader
+    forwards them as ingest headers."""
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["headers"] = dict(req.header_items())
+        return _ok_response()
+
+    with patch("vibeshub_client.upload.urllib_request.urlopen", side_effect=fake_urlopen):
+        await _upload(git_branch="main", git_commit="d" * 40)
+
+    # urllib title-cases header names
+    assert captured["headers"]["X-vibeshub-git-branch"] == "main"
+    assert captured["headers"]["X-vibeshub-git-commit"] == "d" * 40
+
+
+@pytest.mark.asyncio
+async def test_upload_omits_git_headers_when_none():
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["headers"] = dict(req.header_items())
+        return _ok_response()
+
+    with patch("vibeshub_client.upload.urllib_request.urlopen", side_effect=fake_urlopen):
+        await _upload(git_branch=None, git_commit=None)
+
+    assert "X-vibeshub-git-branch" not in captured["headers"]
+    assert "X-vibeshub-git-commit" not in captured["headers"]
+
+
 _CERT_ERR = urllib_error.URLError(
     "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
     "self signed certificate in certificate chain (_ssl.c:997)"

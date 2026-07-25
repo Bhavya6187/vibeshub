@@ -139,6 +139,32 @@ If you type `/share-trace` in Codex, ask Codex to run the
 `vibeshub:share-trace` skill; the un-namespaced Claude command wrapper is not
 used by Codex.
 
+## Manual import command
+
+Pull a trace back down as a session your CLI can resume. The trace is placed
+where that CLI keeps its sessions and the exact resume command is printed:
+
+- `/import-trace <trace-url-or-short-id> --to codex` (Claude Code) or
+  `/vibeshub:import-trace <trace-url-or-short-id> --to codex` (Codex) writes a
+  rollout under your Codex home (`~/.codex` by default, `CODEX_HOME` is
+  honored), resumable with `codex resume <session-id>`.
+- `--to claude` writes a session for the current directory, resumable with
+  `claude --resume <session-id>`.
+- Add `--checkout` to also fetch and switch to the session's branch when that
+  branch exists and your working tree is clean. Without it the command only
+  prints repo-state guidance and never touches your working tree. The commit
+  the session started from is provenance only, it is never checked out.
+
+Importing the same trace twice never overwrites the first copy; the second
+import is re-identified so both sessions resume independently. Private traces
+authenticate with your `gh auth token`, which is only sent to the vibeshub
+server you configured.
+
+Codex traces imported into Claude Code (and the reverse) are converted, so
+some detail is dropped by design: reasoning is encrypted per provider and
+cannot cross over. Cursor traces are view-grade only and have no Claude
+target.
+
 ## Privacy
 
 Traces attached to a **public** GitHub repo (and standalone traces) default to

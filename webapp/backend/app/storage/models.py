@@ -75,6 +75,15 @@ class Trace(Base):
         String(32), nullable=True
     )
 
+    # Captured plugin-side at share time (redaction destroys in-blob SHAs;
+    # see the trace-porting spec). NULL for pre-0.6.0 plugins/web uploads.
+    git_branch: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True
+    )
+    git_commit: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
+    )
+
     # Owner-supplied display title. NULL means "fall back to the trace's
     # derived title" (the client shows the AI title or "Untitled session").
     # Settable only by the owner via PATCH /api/traces/{short_id}.
