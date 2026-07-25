@@ -567,7 +567,10 @@ def claude_session_id_from_blob(blob: bytes) -> str | None:
     id the trace row happens to hold. None when no early record carries a
     uuid-shaped sessionId.
     """
-    for line in blob.split(b"\n")[:_SESSION_ID_SCAN_LINES]:
+    # Bounded split: a maxsplit keeps a 50MB blob from being materialized as
+    # a list of every line. The trailing remainder is not a single record, so
+    # it fails to parse and falls out of the loop.
+    for line in blob.split(b"\n", _SESSION_ID_SCAN_LINES):
         if not line.strip():
             continue
         try:

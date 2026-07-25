@@ -99,6 +99,38 @@ def test_paired_tool_calls_are_not_padded_twice():
     )
 
 
+def test_contiguous_assistant_records_share_one_message_id():
+    """Real transcripts carry one message.id per API response, so a reader
+    regrouping by id must not split back-to-back tool calls into separate
+    messages: that would leave a tool_use with no adjacent tool_result."""
+    blob = b"\n".join([
+        b'{"timestamp":"t1","type":"event_msg","payload":'
+        b'{"type":"user_message","message":"go"}}',
+        b'{"timestamp":"t2","type":"response_item","payload":'
+        b'{"type":"function_call","name":"exec_command","call_id":"c1",'
+        b'"arguments":"{\\"cmd\\":\\"ls\\"}"}}',
+        b'{"timestamp":"t3","type":"response_item","payload":'
+        b'{"type":"function_call","name":"exec_command","call_id":"c2",'
+        b'"arguments":"{\\"cmd\\":\\"pwd\\"}"}}',
+        b'{"timestamp":"t4","type":"response_item","payload":'
+        b'{"type":"function_call_output","call_id":"c1","output":"a"}}',
+        b'{"timestamp":"t5","type":"response_item","payload":'
+        b'{"type":"function_call_output","call_id":"c2","output":"b"}}',
+        b'{"timestamp":"t6","type":"response_item","payload":'
+        b'{"type":"message","role":"assistant","content":'
+        b'[{"type":"output_text","text":"done"}]}}',
+    ])
+    recs = [json.loads(line)
+            for line in codex_to_claude_session(blob, session_id=SID)
+            .splitlines() if line.strip()]
+    ids = [r["message"]["id"] for r in recs if r["type"] == "assistant"]
+    assert len(ids) == 3
+    # The two consecutive tool calls are one assistant turn.
+    assert ids[0] == ids[1]
+    # The text after the tool results is a new turn, so a new id.
+    assert ids[2] != ids[0]
+
+
 def test_malformed_records_are_skipped_not_raised():
     """Uploaded bytes are untrusted: bad shapes drop records, never raise."""
     blob = b"\n".join([

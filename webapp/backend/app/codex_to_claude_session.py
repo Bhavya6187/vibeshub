@@ -29,11 +29,14 @@ def codex_to_claude_session(blob: bytes, *, session_id: str) -> bytes:
     model: str | None = None
     cwd: str = "/"
     branch: str | None = None
+    run_msg_id: str | None = None
 
     def envelope(
         rec_type: str, ts: str, message: dict, extra: dict | None = None,
     ) -> None:
-        nonlocal n, prev_uuid
+        nonlocal n, prev_uuid, run_msg_id
+        if rec_type != "assistant":
+            run_msg_id = None  # anything else ends the assistant turn
         u = str(uuid.uuid5(
             uuid.NAMESPACE_URL, f"vibeshub-import:{session_id}:{n}"
         ))
@@ -52,8 +55,19 @@ def codex_to_claude_session(blob: bytes, *, session_id: str) -> bytes:
         n += 1
 
     def assistant_msg(blocks: list[dict]) -> dict:
+        """One message.id per contiguous run of assistant records.
+
+        A real transcript carries a single id across every block of one API
+        response, and back-to-back tool calls are common, so minting an id
+        per record would let a reader regroup them into separate messages
+        and strand a tool_use away from its tool_result. The id is frozen at
+        the record index the run starts on, so it stays deterministic.
+        """
+        nonlocal run_msg_id
+        if run_msg_id is None:
+            run_msg_id = f"msg-vibeshub-{n}"
         return {
-            "id": f"msg-vibeshub-{n}", "type": "message",
+            "id": run_msg_id, "type": "message",
             "role": "assistant", "model": model or "codex",
             "content": blocks, "stop_reason": None,
         }
