@@ -81,10 +81,15 @@ Tool names: `Bash` maps to `exec_command` with translated arguments; all
 other Claude tools stay verbatim as foreign function calls, subject to
 revision after the spike.
 
+Git metadata: `session_meta.git` is fabricated from the trace's git
+metadata (branch from the transcript's `gitBranch`, commit and repo URL
+from the trace columns described below when present).
+
 **`codex_to_claude_session.py`** is the resume-grade sibling of the
 view-grade converter: real uuid/parentUuid chains, `sessionId` matching the
-output filename, full per-line envelope (cwd, timestamp, version),
-Anthropic-shaped `message` bodies. Encrypted reasoning is dropped;
+output filename, full per-line envelope (cwd, timestamp, version, and
+`gitBranch` from `session_meta.git.branch`), Anthropic-shaped `message`
+bodies. Encrypted reasoning is dropped;
 `exec_command` maps back to `Bash`; other Codex tools stay verbatim and
 render generically in Claude Code.
 
@@ -146,6 +151,48 @@ Failure behavior: verify the write landed; never partially overwrite;
 unknown targets or missing converted copies fail with instructions, not
 tracebacks.
 
+## Git metadata and repo state
+
+Motivation: a ported session is grounded in a repo state; the importer
+needs enough metadata to get there. Two constraints shape the design.
+First, redaction's entropy pass destroys long hex in stored blobs, so any
+in-transcript commit SHA (including Codex's `session_meta.git.commit_hash`)
+is gone by the time the server has the trace, and redaction is byte-level,
+never JSON-aware, so the field cannot be exempted. Second, unpushed
+commits and dirty files are not in the trace at all, so a true
+working-tree restore is impossible by construction.
+
+Capture (reliable path, client-side before redaction):
+
+- The plugin share pipeline records `git rev-parse HEAD` and the current
+  branch, sent as `X-Vibeshub-Git-Branch` / `X-Vibeshub-Git-Commit`
+  ingest headers.
+- Stored as nullable `git_branch` / `git_commit` columns on `traces`.
+- Traces from older plugin versions degrade to branch-only (branch also
+  survives inside the blob and is mapped by the converters).
+
+Injection into exports:
+
+- Converted Codex exports: fabricate `session_meta.git` (branch, commit,
+  repo URL from `repo_full_name`) when available. The same-format
+  short-circuit stays verbatim, so a Codex-native trace's redacted
+  `commit_hash` is not restored in the blob; the import verb reads the
+  metadata from response headers instead.
+- Claude exports: the format has no commit field; the export response
+  carries the metadata in headers for the import verb.
+
+Import-verb repo-state behavior (check always, mutate only on opt-in):
+
+- Always verify: cwd is a git repo matching `repo_full_name`; the
+  session's branch exists locally or on a remote; the recorded commit is
+  reachable. On divergence, print exact suggested commands.
+- `--checkout`: fetch and switch to the session branch at its latest
+  pushed state, only when the working tree is clean. Never checks out the
+  recorded starting commit (that would undo the session's own work; the
+  commit is recorded for provenance and divergence warnings, not
+  restoration).
+- No silent working-tree mutation, ever.
+
 ## Build order
 
 1. **Spike (step 0):** hand-convert one real local Claude session to a
@@ -154,8 +201,11 @@ tracebacks.
    golden fixture.
 2. Converters plus golden tests (backend pytest via `env/bin/pytest`).
 3. Export endpoints plus auth plus tests.
-4. CLI import verb plus plugin packaging.
-5. End-to-end both directions on a real machine: upload, import, resume.
+4. CLI import verb plus plugin packaging, including share-side git
+   capture (headers, columns) and the repo-state check / `--checkout`.
+5. End-to-end both directions on a real machine: upload, import, resume,
+   including a takeover-style run where the importer starts on a
+   different branch and follows the printed guidance.
 
 ## Risks and open questions
 
