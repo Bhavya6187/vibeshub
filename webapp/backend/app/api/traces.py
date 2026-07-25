@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
+import uuid as uuid_mod
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
@@ -11,6 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import AgentSummary, ClaimRequest, TraceSummary
 from app.api.trace_service import resolve_association
+from app.claude_to_codex_rollout import (
+    claude_to_codex_rollout,
+    rollout_filename_from_blob,
+    uuid7_from,
+)
+from app.codex_to_claude_session import codex_to_claude_session
 from app.convert import IMPORTED_FORMATS, convert_imported
 from app.redact.bundle import AGENT_ID_RE
 from app.auth.crypto import TokenCipher
@@ -483,6 +491,209 @@ async def get_trace_session(
     headers = (
         {"Cache-Control": "private, no-store"} if trace.is_private else None
     )
+    return Response(
+        content=data, media_type="application/x-ndjson", headers=headers
+    )
+
+
+def _git_meta(trace: Trace) -> dict | None:
+    git: dict = {}
+    if trace.git_branch:
+        git["branch"] = trace.git_branch
+    if trace.git_commit:
+        git["commit_hash"] = trace.git_commit
+    if trace.repo_full_name:
+        git["repository_url"] = (
+            f"https://github.com/{trace.repo_full_name}.git"
+        )
+    return git or None
+
+
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def _safe_filename(name: str) -> str:
+    """A response-header-safe download filename.
+
+    A Codex export filename is built from the uploaded rollout's own
+    session_meta id and timestamp, so it is attacker-controlled: anything
+    outside a conservative set (CR/LF above all, which would otherwise
+    inject response headers) becomes an underscore, and the whole name is
+    capped. Well-formed rollout filenames are unchanged.
+    """
+    return _UNSAFE_FILENAME_CHARS.sub("_", name)[:200]
+
+
+def _export_claude_session_id(trace: Trace) -> str:
+    """The sessionId a Claude-target export resumes under: the trace's own
+    session id when it is a real uuid, a stable derived one otherwise."""
+    try:
+        return str(uuid_mod.UUID(trace.session_id or ""))
+    except ValueError:
+        return str(uuid_mod.uuid5(
+            uuid_mod.NAMESPACE_URL,
+            f"vibeshub-claude-export:{trace.short_id}",
+        ))
+
+
+async def _require_export_access(
+    trace: Trace,
+    *,
+    user: User | None,
+    authorization: str | None,
+    github: GitHubClient,
+    settings: Settings,
+    access: RepoAccessChecker,
+) -> None:
+    """Cookie viewers use the normal gate; a GitHub bearer token (the
+    plugin's `gh auth token`) is accepted as an alternative identity."""
+    if not trace.is_private or user is not None:
+        await _require_trace_access(trace, user, settings, access)
+        return
+    no_store = {"Cache-Control": "no-store"}
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=401, detail="auth_required", headers=no_store
+        )
+    token = authorization.split(None, 1)[1].strip()
+    try:
+        gh_user = await github.verify_token(token)
+    except GitHubAuthError:
+        raise HTTPException(
+            status_code=401, detail="auth_required", headers=no_store
+        )
+    if trace.repo_full_name is None:
+        if trace.owner_login != gh_user.login:
+            raise HTTPException(
+                status_code=404, detail="not_found", headers=no_store
+            )
+        return
+    # The bearer identity has no local User row, so the per-viewer repo
+    # access cache is keyed by a stable pseudo id derived from the GitHub
+    # user id. A cache entry is never shared across GitHub accounts.
+    pseudo_id = uuid_mod.uuid5(
+        uuid_mod.NAMESPACE_URL, f"vibeshub-gh-user:{gh_user.id}"
+    )
+    try:
+        allowed = await access.can_read(
+            pseudo_id, token, trace.repo_full_name
+        )
+    except RepoAccessError:
+        raise HTTPException(
+            status_code=502, detail="github_upstream_error", headers=no_store
+        )
+    if not allowed:
+        raise HTTPException(
+            status_code=404, detail="not_found", headers=no_store
+        )
+
+
+@router.get("/api/traces/{short_id}/export/{target}")
+async def export_trace(
+    short_id: str,
+    target: str,
+    authorization: Annotated[str | None, Header()] = None,
+    session: AsyncSession = Depends(get_session),
+    blob_store: BlobStore = Depends(get_blob_store),
+    user: User | None = Depends(get_current_user),
+    settings: Settings = Depends(get_app_settings),
+    access: RepoAccessChecker = Depends(get_repo_access),
+    github: GitHubClient = Depends(get_github),
+):
+    """The trace as a resumable session file for `target`'s CLI.
+
+    A trace already native to `target` is served verbatim (its original
+    filename recovered where the format carries one); otherwise it is
+    converted on the fly. Cursor traces have no Claude target: the Cursor
+    import is view-grade only, so that pairing is refused rather than
+    served as a session that would not resume.
+    """
+    if target not in ("codex", "claude"):
+        raise HTTPException(status_code=404, detail="not found")
+    if not looks_like_short_id(short_id):
+        raise HTTPException(status_code=404, detail="not found")
+    stmt = select(Trace).where(
+        Trace.short_id == short_id, Trace.deleted_at.is_(None)
+    )
+    trace = (await session.execute(stmt)).scalar_one_or_none()
+    if trace is None:
+        raise HTTPException(status_code=404, detail="not found")
+    await _require_export_access(
+        trace, user=user, authorization=authorization,
+        github=github, settings=settings, access=access,
+    )
+    if trace.blob_prefix is None:
+        raise HTTPException(
+            status_code=500, detail="trace not migrated to v2 layout"
+        )
+
+    raw = await blob_store.get(f"{trace.blob_prefix}main.jsonl")
+    src = trace.source_format  # None means already Claude-shaped
+    session_uuid: str
+    if target == "codex":
+        if src == "codex":
+            data = raw
+            filename = rollout_filename_from_blob(raw)
+            if filename is None:
+                raise HTTPException(
+                    status_code=422, detail="unconvertible_trace"
+                )
+            filename = _safe_filename(filename)
+            # The stem ends with the original rollout's 36-char session id.
+            session_uuid = filename[:-len(".jsonl")][-36:]
+        else:
+            session_uuid = uuid7_from(
+                int(trace.created_at.timestamp() * 1000), trace.short_id
+            )
+            claude_shaped = await _claude_shaped(
+                blob_store,
+                raw_key=f"{trace.blob_prefix}main.jsonl",
+                converted_key=f"{trace.blob_prefix}converted.jsonl",
+                source_format=src,
+            )
+            data = claude_to_codex_rollout(
+                claude_shaped,
+                session_uuid=session_uuid,
+                git=_git_meta(trace),
+            )
+            filename = rollout_filename_from_blob(data)
+            if filename is None:
+                raise HTTPException(
+                    status_code=422, detail="unconvertible_trace"
+                )
+            # The stamp comes from the source transcript's own timestamp.
+            filename = _safe_filename(filename)
+    else:  # target == "claude"
+        if src == "cursor":
+            raise HTTPException(
+                status_code=422, detail="cursor_to_claude_unsupported"
+            )
+        session_uuid = _export_claude_session_id(trace)
+        if src == "codex":
+            data = codex_to_claude_session(raw, session_id=session_uuid)
+        else:
+            data = raw
+        filename = f"{session_uuid}.jsonl"
+
+    # A rollout carrying only reasoning (dropped by design) converts to
+    # nothing. It is a valid trace that cannot be ported, so refuse instead
+    # of handing the CLI an empty file to write.
+    if not data:
+        raise HTTPException(status_code=422, detail="unconvertible_trace")
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "X-Vibeshub-Filename": filename,
+        "X-Vibeshub-Session-Uuid": session_uuid,
+    }
+    if trace.git_branch:
+        headers["X-Vibeshub-Git-Branch"] = trace.git_branch
+    if trace.git_commit:
+        headers["X-Vibeshub-Git-Commit"] = trace.git_commit
+    if trace.repo_full_name:
+        headers["X-Vibeshub-Repo"] = trace.repo_full_name
+    if trace.is_private:
+        headers["Cache-Control"] = "private, no-store"
     return Response(
         content=data, media_type="application/x-ndjson", headers=headers
     )
