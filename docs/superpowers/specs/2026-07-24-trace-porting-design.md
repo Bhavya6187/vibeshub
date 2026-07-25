@@ -225,7 +225,8 @@ Import-verb repo-state behavior (check always, mutate only on opt-in):
   is part of e2e.
 - **Anthropic API tolerance on resumed foreign history** is already
   de-risked by the 2026-07-24 verification.
-- **Optional redaction refinement (separate decision):** exempting
+- **Optional redaction refinement (out of scope for v1, decided
+  2026-07-24):** exempting
   pure-hex 40-char matches from the `aws_secret_access_key` pattern would
   preserve git SHAs in blobs (real AWS secrets are base64-class and
   virtually never pure hex). Trade-off: legacy 40-hex credentials (e.g.
