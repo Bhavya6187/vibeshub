@@ -57,6 +57,11 @@ what `import-trace` reports on, so they are provenance, never a requirement.
 [`cli/commands/import-trace.py`](cli/commands/import-trace.py) directly)
 downloads a trace as a resumable session for the other CLI.
 
+Two wrappers cover the common directions without naming a target:
+`/vibeshub:handoff` uploads the current Claude Code session and imports it into
+Codex in one step, and `/vibeshub:import <trace-url-or-short-id> [--checkout]`
+runs this same script with `--to claude` appended, for the trip back.
+
 It calls `GET /api/traces/{short_id}/export/{target}`, which serves a trace that
 is already native to the target verbatim and converts everything else on the
 fly. The client reads `X-Vibeshub-Filename` and `X-Vibeshub-Session-Uuid` to name
