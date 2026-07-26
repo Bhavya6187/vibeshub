@@ -76,13 +76,25 @@ async def _upload(
 ) -> RunResult | None:
     """Share the current session. Returns the RunResult on success, or None
     after reporting why nothing was uploaded."""
-    # Under Codex there is no Claude session id. select_adapter falls back to
-    # CODEX_HOME, and CodexTranscriptReader picks the newest rollout for cwd.
+    # handoff always ports *this* Claude Code session, so unlike share-trace
+    # it cannot accept another platform's reader. select_adapter falls back to
+    # CODEX_HOME, and CodexTranscriptReader then picks the newest rollout for
+    # cwd: a different conversation entirely.
     reader = select_adapter(
         {"cwd": os.getcwd(), "plugin_root": str(_PLUGIN_ROOT)}
     )
 
-    if not session_id and reader.platform_id() == "claude-code":
+    if reader.platform_id() != "claude-code":
+        sys.stderr.write(
+            "[vibeshub] handoff ports the current Claude Code session, but a "
+            "non-Claude transcript reader was selected (this happens when "
+            "CODEX_HOME is set in the shell). Refusing to upload a different "
+            "conversation. Use /share-trace and then import-trace to pick the "
+            "trace you want.\n"
+        )
+        return None
+
+    if not session_id:
         sys.stderr.write(
             "[vibeshub] no session_id available; this command must be run "
             "inside a Claude Code session\n"
@@ -118,6 +130,10 @@ def main() -> None:
         sys.exit(1)
 
     print(f"trace uploaded: {result.trace_url}")
+    # The upload can succeed with a partial failure attached (e.g. the PR
+    # comment). stderr keeps the stdout last line the resume command.
+    if result.skip_reason:
+        print(f"note: {result.skip_reason}", file=sys.stderr)
     try:
         code = run_import(
             result.trace_url, "codex",
@@ -130,7 +146,7 @@ def main() -> None:
         print(
             "upload succeeded but placing the Codex session failed: "
             f"{e}\nYour trace is safe at {result.trace_url}; retry with: "
-            f"python3 {_PLUGIN_ROOT}/commands/import-trace.py "
+            f'python3 "{_PLUGIN_ROOT}/commands/import-trace.py" '
             f"{result.trace_url} --to codex",
             file=sys.stderr,
         )
