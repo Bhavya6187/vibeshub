@@ -1,6 +1,6 @@
 [project]
 name = "vibeshub-backend"
-version = "0.6.0"
+version = "0.6.1"
 description = "vibeshub web app backend"
 requires-python = ">=3.12,<3.14"
 dependencies = [

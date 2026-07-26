@@ -1,7 +1,7 @@
 {
   "name": "vibeshub",
   "description": "Upload Claude Code and Codex CLI conversation traces to vibeshub when a PR is created",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "author": {
     "name": "vibeshub",
     "email": "bhavya@vibeshub.ai"

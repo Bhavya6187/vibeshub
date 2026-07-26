@@ -125,6 +125,9 @@ best target automatically:
 - `/share-trace <pr-url-or-number>` — share a specific PR
 - `/share-trace delete <pr-url | pr-number | /t/<id> url | short-id>` — delete a
   trace. A bare number is always treated as a PR number.
+- `/handoff [<pr-url-or-number>]` uploads this session and then places the
+  converted Codex session on this machine, printing the `codex resume <id>`
+  that continues the same conversation there.
 
 ### Codex
 
@@ -154,6 +157,9 @@ where that CLI keeps its sessions and the exact resume command is printed:
   branch exists and your working tree is clean. Without it the command only
   prints repo-state guidance and never touches your working tree. The commit
   the session started from is provenance only, it is never checked out.
+- `/import <trace-url-or-short-id> [--checkout]` (Claude Code) is the same
+  command with `--to claude` already filled in, for pulling a trace (including
+  one handed off to Codex) back into this project.
 
 Importing the same trace twice never overwrites the first copy; the second
 import is re-identified so both sessions resume independently. Private traces
