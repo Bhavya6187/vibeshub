@@ -5,6 +5,12 @@ accepted and resume cleanly; foreign tool names ride along verbatim and
 their output reaches the model; turn_context is optional; and
 base_instructions is not required. Full verdict below.
 
+Amendment (2026-07-26, codex-cli 0.145): session_meta MUST carry
+model_provider. The interactive TUI's thread/resume rejects a rollout
+without it ("Model provider `` not found", code -32600); `codex exec
+resume`, which the spike used, still tolerates the omission, which is
+how the gap escaped the spike.
+
 Pure: bytes in, bytes out, no I/O. The inverse-direction sibling is
 codex_to_claude_session.py; the view-grade codex_convert.py is frozen
 and unrelated to this module.
@@ -165,6 +171,11 @@ def claude_to_codex_rollout(
         "id": session_uuid, "timestamp": first_ts, "cwd": cwd,
         "originator": "vibeshub", "cli_version": "vibeshub-export",
         "source": "vibeshub",
+        # Required by Codex >= 0.145.0: the TUI's thread/resume looks the
+        # provider up by this name and rejects the rollout when it is absent
+        # ("Model provider `` not found", code -32600). "openai" is Codex's
+        # built-in default provider id.
+        "model_provider": "openai",
     }
     if git:
         meta["git"] = git
