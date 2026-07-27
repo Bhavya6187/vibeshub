@@ -98,6 +98,16 @@ vibeshub stores the trace, runs the digest agent, and a single bot comment lands
 
 The full ten-step pipeline (digest agent, private-repo gating, web upload) is in [the architecture doc](docs/architecture.md), kept out of the hero so the README stays scannable.
 
+## Trace porting
+
+A trace is not just a replay. Any trace can come back down as a live session and continue from where it stopped, in the same CLI or the other one.
+
+- `/handoff` (Claude Code) uploads this session, places the converted Codex session on this machine, and prints the exact `codex resume <id>` that continues the same conversation. Edit, `/handoff`, quit, paste one command, keep going in Codex.
+- `/import <trace-url-or-id> [--checkout]` (Claude Code) pulls any vibeshub trace, including one handed off to Codex, back down as a resumable session in the current project.
+- `/import-trace <trace-url-or-id> --to codex|claude` is the generic form, available in both Claude Code and Codex.
+
+Conversion between Claude Code and Codex is resume-grade in both directions; provider-encrypted reasoning cannot cross over, and Cursor traces are view-grade only. Flags and caveats are in [plugins/cli/README.md](plugins/cli/README.md#manual-import-command).
+
 ## Project reference
 
 <details>
@@ -106,7 +116,8 @@ The full ten-step pipeline (digest agent, private-repo gating, web upload) is in
 ```
 vibeshub/
 ├── plugins/
-│   ├── cli/            # Claude Code + Codex + Cursor: hooks + /share-trace slash command;
+│   ├── cli/            # Claude Code + Codex + Cursor: hooks + slash commands
+│   │                   # (/share-trace, /handoff, /import, /import-trace);
 │   │                   # bundles the vibeshub_client library (redaction, upload, gh-comment)
 │   └── README.md       # how to add a new platform plugin
 ├── webapp/
@@ -116,6 +127,8 @@ vibeshub/
 │   └── frontend/       # React + Vite SPA; build copies dist/ → backend/frontend_dist/
 │                       # Landing, /home, /vibeviewer, /privacy, /:owner, /:owner/:repo,
 │                       # /:owner/:repo/pull/:number, /t/:shortId trace viewer
+├── cursor-plugin/      # generated Cursor plugin snapshot, mirrored to vibeshub/vibeshub-cursor
+├── scripts/            # sync-cursor-plugin.py, regenerates that snapshot
 ├── deploy/azure/       # Dockerfile + deploy.sh + Portal/CLI walkthroughs
 └── docs/superpowers/   # design spec + implementation plans
 ```
@@ -131,7 +144,7 @@ Per-component docs:
 `PLUGIN_VERSION` in [`plugins/cli/vibeshub_client/version.py`](plugins/cli/vibeshub_client/version.py);
 mirrors (Claude/Codex manifests, plugin + backend `pyproject.toml`, frontend
 `package.json`, FastAPI metadata, this README badge) are kept in lockstep by
-test. Cursor's `plugin.json` is generated from the same value — see
+test. Cursor's `plugin.json` is generated from the same value; see
 [docs/cursor-release.md](docs/cursor-release.md).
 
 </details>
