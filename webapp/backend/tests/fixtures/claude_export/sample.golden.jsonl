@@ -1,4 +1,4 @@
-{"timestamp":"2026-05-16T03:57:32.267Z","type":"session_meta","payload":{"id":"01912345-0000-7000-8000-000000000abc","timestamp":"2026-05-16T03:57:32.267Z","cwd":"/Users/bhavya/git/vibeshub","originator":"vibeshub","cli_version":"vibeshub-export","source":"vibeshub"}}
+{"timestamp":"2026-05-16T03:57:32.267Z","type":"session_meta","payload":{"id":"01912345-0000-7000-8000-000000000abc","timestamp":"2026-05-16T03:57:32.267Z","cwd":"/Users/bhavya/git/vibeshub","originator":"vibeshub","cli_version":"vibeshub-export","source":"vibeshub","model_provider":"openai"}}
 {"timestamp":"2026-05-16T03:57:32.267Z","type":"turn_context","payload":{"cwd":"/Users/bhavya/git/vibeshub","approval_policy":"on-request","sandbox_policy":{"type":"workspace-write"}}}
 {"timestamp":"2026-05-16T03:57:32.267Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"can you add startup credential smoke-check in a new branch"}]}}
 {"timestamp":"2026-05-16T03:57:32.267Z","type":"event_msg","payload":{"type":"user_message","message":"can you add startup credential smoke-check in a new branch"}}

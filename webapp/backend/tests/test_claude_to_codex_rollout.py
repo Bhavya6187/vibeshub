@@ -38,6 +38,9 @@ def test_first_line_is_session_meta_with_given_uuid():
     assert first["type"] == "session_meta"
     assert first["payload"]["id"] == SESSION_UUID
     assert first["payload"]["originator"] == "vibeshub"
+    # Codex 0.145.0's TUI thread/resume rejects a rollout whose session_meta
+    # lacks model_provider: "Model provider `` not found" (code -32600).
+    assert first["payload"]["model_provider"] == "openai"
     assert "git" not in first["payload"]
 
 
