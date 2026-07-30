@@ -19,10 +19,10 @@ export interface FileNote {
 
 export interface TraceDigest {
   ask: string;
-  decisions: string;
-  files: string;
+  decisions: string[];
+  dead_ends: string[];
+  learnings: string[];
   tests: string;
-  dead_ends: string;
   chapters: DigestChapter[];
   file_notes?: FileNote[];
 }
@@ -204,3 +204,20 @@ export interface TracePatch {
   repo_full_name?: string | null;
   title?: string | null;
 }
+
+export interface AskCitation {
+  type: "session" | "chapter" | "pr" | "commit" | "file";
+  title: string;
+  trace_short_id: string | null;
+  anchor_uuid: string | null;
+  pr_number: number | null;
+  url: string | null;
+}
+
+export type AskEvent =
+  | { kind: "status"; text: string }
+  | { kind: "notice"; message: string }
+  | { kind: "delta"; text: string }
+  | { kind: "citations"; citations: AskCitation[] }
+  | { kind: "error"; code: string; message: string }
+  | { kind: "done"; best_effort: boolean };

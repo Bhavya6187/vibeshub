@@ -18,7 +18,7 @@ class CardData:
     """Everything the renderer needs to draw one card.
 
     `ask`/`decisions`/`dead_ends` are None when the trace has no digest or
-    the digest field is blank; the renderer omits those rows.
+    the field is empty; `decisions`/`dead_ends` carry the first digest item.
     `repo_ref` is the header chip (`acme/site #482`, `acme/site`, or None
     for a standalone trace).
     """
@@ -39,6 +39,14 @@ def _clean(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     return value.strip() or None
+
+
+def _first(value: object) -> str | None:
+    """First item of a digest list field, or None. Non-list values (old
+    string-shape digests awaiting the re-digest backfill) read as absent."""
+    if isinstance(value, list) and value:
+        return _clean(value[0])
+    return None
 
 
 def build_card_data(trace: Trace) -> CardData:
@@ -67,8 +75,8 @@ def build_card_data(trace: Trace) -> CardData:
         repo_ref=repo_ref,
         owner_login=trace.owner_login,
         ask=_clean(digest.get("ask")),
-        decisions=_clean(digest.get("decisions")),
-        dead_ends=_clean(digest.get("dead_ends")),
+        decisions=_first(digest.get("decisions")),
+        dead_ends=_first(digest.get("dead_ends")),
         message_count=trace.message_count or 0,
         subagent_count=trace.agent_count or 0,
     )

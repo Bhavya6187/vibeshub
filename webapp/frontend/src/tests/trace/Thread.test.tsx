@@ -27,7 +27,7 @@ function makeSession(): Session {
 }
 
 const digest: TraceDigest = {
-  ask: "a", decisions: "d", files: "f", tests: "t", dead_ends: "e",
+  ask: "a", decisions: ["d"], dead_ends: ["e"], learnings: [], tests: "t",
   chapters: [{ anchor_uuid: "tool1", title: "Run it", caption: "Runs the command." }],
 };
 
@@ -64,7 +64,7 @@ function makeMidRunSession(): Session {
 }
 
 const midRunDigest: TraceDigest = {
-  ask: "a", decisions: "d", files: "f", tests: "t", dead_ends: "e",
+  ask: "a", decisions: ["d"], dead_ends: ["e"], learnings: [], tests: "t",
   chapters: [{ anchor_uuid: "t1", title: "Run it", caption: "Runs the command." }],
 };
 

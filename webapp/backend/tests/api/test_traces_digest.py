@@ -70,9 +70,12 @@ def _patch_llm(monkeypatch):
 
     mock = MagicMock()
     payload = {
-        "ask": "test ask", "decisions": "test decisions",
-        "files": "test files", "tests": "test tests",
-        "dead_ends": "test dead_ends", "chapters": [],
+        "ask": "test ask",
+        "decisions": ["chose test decisions over nothing because test"],
+        "dead_ends": ["tried a shortcut, abandoned because it failed"],
+        "learnings": ["the fixture trace has only two events"],
+        "tests": "test tests",
+        "chapters": [],
     }
     resp = MagicMock()
     # The pipeline uses responses.parse (Structured Outputs), which
@@ -159,9 +162,12 @@ def _install_digest_mock(monkeypatch, chapters: list[dict]) -> MagicMock:
 
     mock = MagicMock()
     payload = {
-        "ask": "test ask", "decisions": "test decisions",
-        "files": "test files", "tests": "test tests",
-        "dead_ends": "test dead_ends", "chapters": chapters,
+        "ask": "test ask",
+        "decisions": ["chose test decisions over nothing because test"],
+        "dead_ends": ["tried a shortcut, abandoned because it failed"],
+        "learnings": ["the fixture trace has only two events"],
+        "tests": "test tests",
+        "chapters": chapters,
     }
     resp = MagicMock()
     resp.output_parsed = Digest.model_validate(payload)
@@ -267,8 +273,12 @@ async def test_file_notes_survive_api_serialization(
 
     _mock_alice_pr(respx_mock, "alice", "repo", 32)
     payload = {
-        "ask": "a", "decisions": "b", "files": "c", "tests": "d",
-        "dead_ends": "e", "chapters": [],
+        "ask": "a",
+        "decisions": ["chose test decisions over nothing because test"],
+        "dead_ends": ["tried a shortcut, abandoned because it failed"],
+        "learnings": ["the fixture trace has only two events"],
+        "tests": "d",
+        "chapters": [],
         "file_notes": [{"path": "src/x.ts", "caption": "Tighten the x path"}],
     }
     mock = MagicMock()
@@ -300,3 +310,51 @@ async def test_file_notes_survive_api_serialization(
     assert summary["ai_digest"]["file_notes"] == [
         {"path": "src/x.ts", "caption": "Tighten the x path"}
     ]
+
+
+# --- ai_digest boundary validator -----------------------------------
+
+from app.api.schemas import IngestResponse, TraceSummary  # noqa: E402
+
+OLD_SHAPE = {
+    "ask": "a", "decisions": "prose", "files": "f", "tests": "t",
+    "dead_ends": "prose", "chapters": [],
+}
+NEW_SHAPE = {
+    "ask": "a",
+    "decisions": ["chose X over Y because Z"],
+    "dead_ends": [],
+    "learnings": ["gotcha found mid-task"],
+    "tests": "none",
+    "chapters": [],
+    "file_notes": [],
+}
+
+
+def _summary(digest) -> TraceSummary:
+    return TraceSummary(
+        trace_id="t1", short_id="abc12345", owner_login=None,
+        repo_full_name=None, pr_number=None, pr_url=None, pr_title=None,
+        platform="claude-code", byte_size=1, message_count=1,
+        created_at="2026-07-19T00:00:00Z", ai_digest=digest,
+    )
+
+
+def test_old_shape_digest_is_hidden_not_500():
+    # Pre-backfill rows must serialize as "no digest", not crash the API.
+    assert _summary(OLD_SHAPE).ai_digest is None
+
+
+def test_new_shape_digest_survives_serialization():
+    s = _summary(NEW_SHAPE)
+    assert s.ai_digest is not None
+    assert s.ai_digest.decisions == ["chose X over Y because Z"]
+    assert s.ai_digest.learnings == ["gotcha found mid-task"]
+
+
+def test_ingest_response_hides_old_shape_too():
+    r = IngestResponse(
+        trace_id="t1", short_id="abc12345",
+        trace_url="https://x/t/abc12345", ai_digest=OLD_SHAPE,
+    )
+    assert r.ai_digest is None

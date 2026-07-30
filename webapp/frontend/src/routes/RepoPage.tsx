@@ -10,6 +10,7 @@ import type {
 import { ErrorState } from "../components/ErrorState";
 import { LoadingState } from "../components/LoadingState";
 import { PageTopbar } from "../components/PageTopbar";
+import { RepoAsk } from "../components/repo/RepoAsk";
 import { SeoHead } from "../components/SeoHead";
 import { TraceListRow } from "../components/TraceListRow";
 
@@ -43,6 +44,7 @@ export function RepoPage() {
   const [ghError, setGhError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<RepoTab>("traces");
+  const [askActive, setAskActive] = useState(false);
 
   useEffect(() => {
     if (!owner || !repo) return;
@@ -71,7 +73,7 @@ export function RepoPage() {
 
   const traceCount = data.stats.trace_count;
   const description =
-    `${owner}/${repo} on vibeshub — ` +
+    `${owner}/${repo} on vibeshub: ` +
     (traceCount > 0
       ? `${traceCount} Claude Code session${traceCount === 1 ? "" : "s"} from this repository.`
       : "Claude Code sessions for this repository.");
@@ -180,32 +182,43 @@ export function RepoPage() {
           </div>
         </div>
 
-        <div className="tabs">
-          <button
-            className={`tab${tab === "traces" ? " active" : ""}`}
-            type="button"
-            onClick={() => setTab("traces")}
-          >
-            Traces <span className="count">{data.stats.trace_count}</span>
-          </button>
-          <button
-            className={`tab${tab === "prs" ? " active" : ""}`}
-            type="button"
-            onClick={() => setTab("prs")}
-          >
-            Pull requests <span className="count">{data.stats.pr_count}</span>
-          </button>
-          <button
-            className={`tab${tab === "contributors" ? " active" : ""}`}
-            type="button"
-            onClick={() => setTab("contributors")}
-          >
-            Contributors{" "}
-            <span className="count">{data.stats.contributor_count}</span>
-          </button>
-        </div>
+        <RepoAsk
+          owner={owner}
+          repo={repo}
+          traceCount={data.stats.trace_count}
+          active={askActive}
+          onActiveChange={setAskActive}
+        />
 
-        <div className="split">
+        {!askActive && (
+          <div className="tabs">
+            <button
+              className={`tab${tab === "traces" ? " active" : ""}`}
+              type="button"
+              onClick={() => setTab("traces")}
+            >
+              Traces <span className="count">{data.stats.trace_count}</span>
+            </button>
+            <button
+              className={`tab${tab === "prs" ? " active" : ""}`}
+              type="button"
+              onClick={() => setTab("prs")}
+            >
+              Pull requests <span className="count">{data.stats.pr_count}</span>
+            </button>
+            <button
+              className={`tab${tab === "contributors" ? " active" : ""}`}
+              type="button"
+              onClick={() => setTab("contributors")}
+            >
+              Contributors{" "}
+              <span className="count">{data.stats.contributor_count}</span>
+            </button>
+          </div>
+        )}
+
+        {!askActive && (
+          <div className="split">
           <div>
             {tab === "traces" && (
               <>
@@ -282,7 +295,8 @@ export function RepoPage() {
               </div>
             </div>
           </aside>
-        </div>
+          </div>
+        )}
       </main>
 
       <footer className="footer">

@@ -7,6 +7,7 @@ in agent_run and the upload still succeeds without a digest.
 from __future__ import annotations
 
 import re
+from typing import Annotated
 
 from pydantic import BaseModel, Field
 
@@ -35,11 +36,14 @@ class Chapter(BaseModel):
     caption: str = Field(max_length=160)
 
 
+_Item = Annotated[str, Field(max_length=200)]
+
+
 class Digest(BaseModel):
     ask: str = Field(max_length=200)
-    decisions: str = Field(max_length=200)
-    files: str = Field(max_length=200)
+    decisions: list[_Item] = Field(default_factory=list, max_length=6)
+    dead_ends: list[_Item] = Field(default_factory=list, max_length=4)
+    learnings: list[_Item] = Field(default_factory=list, max_length=5)
     tests: str = Field(max_length=200)
-    dead_ends: str = Field(max_length=200)
     chapters: list[Chapter] = Field(default_factory=list, max_length=10)
     file_notes: list[FileNote] = Field(default_factory=list, max_length=20)

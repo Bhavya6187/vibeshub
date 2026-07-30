@@ -1,4 +1,5 @@
 import type {
+  AskEvent,
   GithubContributions,
   GithubPickerPr,
   GithubPickerRepo,
@@ -237,4 +238,62 @@ export async function fetchRepoPrs(
   });
   const data = await jsonOrThrow<{ prs: GithubPickerPr[] }>(r);
   return data.prs;
+}
+
+function parseAskFrame(frame: string): AskEvent | null {
+  const lines = frame.split("\n");
+  const eventLine = lines.find((l) => l.startsWith("event: "));
+  const dataLine = lines.find((l) => l.startsWith("data: "));
+  if (!eventLine || !dataLine) return null;
+  const kind = eventLine.slice("event: ".length).trim();
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(dataLine.slice("data: ".length));
+  } catch {
+    return null;
+  }
+  return { kind, ...data } as AskEvent;
+}
+
+/**
+ * Ask the repo agent a question. Parses the SSE response and invokes
+ * onEvent per frame. Throws ApiError when the request is rejected
+ * before the stream opens (400/401/404/429).
+ */
+export async function askRepo(
+  owner: string,
+  repo: string,
+  question: string,
+  onEvent: (e: AskEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const r = await fetch(
+    `/api/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/ask`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ question }),
+      credentials: "same-origin",
+      signal,
+    },
+  );
+  if (!r.ok || !r.body) {
+    throw new ApiError(r.status, await r.text());
+  }
+  const reader = r.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx = buffer.indexOf("\n\n");
+    while (idx >= 0) {
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const ev = parseAskFrame(frame);
+      if (ev) onEvent(ev);
+      idx = buffer.indexOf("\n\n");
+    }
+  }
 }

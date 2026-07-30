@@ -884,6 +884,11 @@ async def delete_trace(
     elif trace.blob_path:
         keys_to_delete.append(trace.blob_path)
 
+    # Trace soft-delete also drops its search documents (the FK cascade
+    # only covers hard deletes).
+    from app.search.index import delete_trace_documents
+    await delete_trace_documents(session, trace.id)
+
     # Soft-delete the row, then best-effort blob cleanup.
     trace.deleted_at = utcnow()
     await session.commit()
@@ -977,6 +982,19 @@ async def patch_trace(
             if new_title == "":
                 new_title = None
         trace.title = new_title
+
+    # Re-associating or flipping privacy must resync the trace's search
+    # documents, or a trace moved to a private/other repo keeps stale
+    # public rows that anonymous askers can still read. Delete-first covers
+    # the became-standalone case (index early-returns when repo is None);
+    # index re-creates rows with the fresh repo/privacy values otherwise.
+    if touches_assoc or "is_private" in fields:
+        from app.search.index import (
+            delete_trace_documents,
+            index_trace_documents,
+        )
+        await delete_trace_documents(session, trace.id)
+        await index_trace_documents(session, trace)
 
     await session.commit()
     await session.refresh(trace)

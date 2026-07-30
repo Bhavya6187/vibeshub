@@ -248,6 +248,18 @@ async def create_or_update_trace(
             "compute_digest raised unexpectedly; upload continues",
         )
 
+    # Search indexing — best-effort, never blocks the upload. The function
+    # records its own failures in agent_run; the outer guard mirrors the
+    # digest hook above.
+    from app.search.index import index_trace_documents
+    try:
+        await index_trace_documents(session, trace)
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger("vibeshub.search.index").exception(
+            "index_trace_documents raised unexpectedly; upload continues",
+        )
+
     return TraceWriteResult(trace=trace, created=created)
 
 

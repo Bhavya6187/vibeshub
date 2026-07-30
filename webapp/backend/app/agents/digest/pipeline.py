@@ -2,8 +2,8 @@
 
 The single public entry point is compute_digest. It:
   1. Distills the trace.
-  2. Hashes the distilled string; if it matches trace.digest_input_hash,
-     skip the LLM call entirely.
+  2. Hashes the prompt + distilled string; if it matches
+     trace.digest_input_hash, skip the LLM call entirely.
   3. Calls OpenAI responses.parse with the Digest schema (Structured
      Outputs); the SDK returns an already-validated Digest.
   4. Drops chapters whose anchor_uuid isn't in the distilled UUID
@@ -43,7 +43,12 @@ async def compute_digest(
     subagent_blobs: dict[str, bytes],
 ) -> Digest | None:
     distilled, uuids = distill_with_uuids(blob, subagent_blobs=subagent_blobs)
-    input_hash = hashlib.sha256(distilled.encode("utf-8")).hexdigest()
+    # Prompt-aware: editing SYSTEM_PROMPT invalidates every cached digest,
+    # which is what lets the re-digest backfill (and future prompt
+    # iteration) actually re-call the LLM.
+    input_hash = hashlib.sha256(
+        (SYSTEM_PROMPT + "\0" + distilled).encode("utf-8")
+    ).hexdigest()
     truncated = "[… elided" in distilled
 
     # Idempotency: same distilled input → reuse persisted digest.
@@ -120,8 +125,12 @@ async def compute_digest(
         return None
 
     # Em-dash sweep + anchor validation
-    for field in ("ask", "decisions", "files", "tests", "dead_ends"):
-        setattr(candidate, field, strip_em_dashes(getattr(candidate, field)))
+    candidate.ask = strip_em_dashes(candidate.ask)
+    candidate.tests = strip_em_dashes(candidate.tests)
+    for field in ("decisions", "dead_ends", "learnings"):
+        setattr(candidate, field, [
+            strip_em_dashes(item) for item in getattr(candidate, field)
+        ])
     chapters_total = len(candidate.chapters)
     candidate.chapters = [
         c for c in candidate.chapters if c.anchor_uuid in uuids

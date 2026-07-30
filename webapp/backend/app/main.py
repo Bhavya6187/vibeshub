@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.api import (
+    ask as ask_api,
     auth as auth_api,
     github_picker as github_picker_api,
     github_stats as github_stats_api,
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_api.router)
     app.include_router(github_stats_api.router)
     app.include_router(github_picker_api.router)
+    app.include_router(ask_api.router)
     # Dynamic social-card images (/api/og/<id>.png) — before the SPA catch-all
     # so the route claims the path instead of index.html.
     app.include_router(og_api.router)

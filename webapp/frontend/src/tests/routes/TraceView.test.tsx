@@ -565,8 +565,7 @@ describe("DigestPanel integration", () => {
 
   it("renders DigestPanel when ai_digest is present", async () => {
     const digest = {
-      ask: "test ask", decisions: "d", files: "f", tests: "t",
-      dead_ends: "e",
+      ask: "test ask", decisions: ["d"], dead_ends: ["e"], learnings: [], tests: "t",
       chapters: [
         { anchor_uuid: "u1", title: "Frame", caption: "ask" },
       ],
@@ -629,7 +628,7 @@ describe("DigestPanel integration", () => {
     // Picking a real fixture uuid means the Thread actually renders an
     // anchored event, and the divider sits above it.
     const digest = {
-      ask: "a", decisions: "d", files: "f", tests: "t", dead_ends: "e",
+      ask: "a", decisions: ["d"], dead_ends: ["e"], learnings: [], tests: "t",
       chapters: [
         { anchor_uuid: "779d4aa7-6138-4b55-93bb-0747bbebb8fa",
           title: "Frame the ask",
@@ -667,7 +666,7 @@ describe("DigestPanel integration", () => {
 
   it("renders the chapter rail (not the prompt rail) when chapters present", async () => {
     const digest = {
-      ask: "a", decisions: "d", files: "f", tests: "t", dead_ends: "e",
+      ask: "a", decisions: ["d"], dead_ends: ["e"], learnings: [], tests: "t",
       chapters: [
         { anchor_uuid: "779d4aa7-6138-4b55-93bb-0747bbebb8fa",
           title: "Frame the ask", caption: "x" },
@@ -690,7 +689,7 @@ describe("DigestPanel integration", () => {
 
   it("falls back to the prompt rail when the digest has no chapters", async () => {
     const digest = {
-      ask: "a", decisions: "d", files: "f", tests: "t", dead_ends: "e",
+      ask: "a", decisions: ["d"], dead_ends: ["e"], learnings: [], tests: "t",
       chapters: [],
     };
     mockFetchSequence({

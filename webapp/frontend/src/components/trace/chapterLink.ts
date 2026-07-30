@@ -79,3 +79,12 @@ export function filesByChapter(
   }
   return out;
 }
+
+// Deep-link support for ask citations (/t/<id>#chapter-<uuid>): scroll
+// the anchored chapter divider into view once the thread has rendered.
+export function scrollToHashAnchor(hash: string): void {
+  const id = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (el) el.scrollIntoView({ block: "start" });
+}

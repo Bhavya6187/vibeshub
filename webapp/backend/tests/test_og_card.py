@@ -31,10 +31,14 @@ def _make_trace(**overrides) -> Trace:
 def _digest(**over) -> dict:
     base = {
         "ask": "Stop the navbar overflowing on small screens",
-        "decisions": "Switched to flex-wrap, dropped fixed widths",
-        "files": "navbar.tsx, layout.css",
+        "decisions": [
+            "Chose flex-wrap over fixed widths because it survives narrow viewports",
+        ],
+        "dead_ends": [
+            "Tried overflow-x first, abandoned because it broke the sticky header",
+        ],
+        "learnings": [],
         "tests": "added a viewport snapshot",
-        "dead_ends": "Tried overflow-x first, broke the sticky header",
         "chapters": [],
         "file_notes": [],
     }
@@ -58,8 +62,12 @@ def test_full_repo_trace_with_digest():
     assert card.repo_ref == "acme/site #482"
     assert card.owner_login == "alice"
     assert card.ask == "Stop the navbar overflowing on small screens"
-    assert card.decisions == "Switched to flex-wrap, dropped fixed widths"
-    assert card.dead_ends == "Tried overflow-x first, broke the sticky header"
+    assert card.decisions == (
+        "Chose flex-wrap over fixed widths because it survives narrow viewports"
+    )
+    assert card.dead_ends == (
+        "Tried overflow-x first, abandoned because it broke the sticky header"
+    )
     assert card.message_count == 257
     assert card.subagent_count == 4
 
@@ -98,13 +106,24 @@ def test_repo_without_pr_number():
     assert card.repo_ref == "acme/site"
 
 
-def test_empty_digest_strings_treated_as_missing():
-    trace = _make_trace(
-        pr_title="x",
-        digest_json=_digest(ask="   ", decisions="", dead_ends="\n"),
-    )
+def test_empty_digest_lists_treated_as_missing():
+    trace = _make_trace(digest_json=_digest(
+        ask="  ", decisions=[], dead_ends=[],
+    ))
     card = build_card_data(trace)
     assert card.ask is None
+    assert card.decisions is None
+    assert card.dead_ends is None
+
+
+def test_old_string_shape_reads_as_absent():
+    # Pre-backfill rows: og reads digest_json raw, so non-list values
+    # must degrade to omitted rows, not crash the card.
+    trace = _make_trace(digest_json={
+        "ask": "old ask", "decisions": "old prose", "dead_ends": "old prose",
+    })
+    card = build_card_data(trace)
+    assert card.ask == "old ask"
     assert card.decisions is None
     assert card.dead_ends is None
 

@@ -24,10 +24,16 @@ def _ok_response(payload: dict):
 
 VALID_PAYLOAD = {
     "ask": "Add a /healthcheck route",
-    "decisions": "Inline in app/main.py; no separate router",
-    "files": "webapp/backend/app/main.py",
+    "decisions": [
+        "Chose an inline route in app/main.py over a separate router because YAGNI",
+    ],
+    "dead_ends": [
+        "Tried a separate APIRouter, abandoned because one route does not justify it",
+    ],
+    "learnings": [
+        "TestClient needs raise_server_exceptions=False to assert 500 responses",
+    ],
     "tests": "test_health.py adds /healthcheck assertion",
-    "dead_ends": "Briefly considered a new router; rejected as YAGNI",
     "chapters": [
         {"anchor_uuid": "u1", "title": "Frame the change",
          "caption": "User asks for /healthcheck."},
@@ -415,3 +421,52 @@ async def test_file_notes_unknown_path_dropped_and_em_dash_swept(
     )).scalars().all()
     assert rows[0].extra["file_notes_kept"] == 1
     assert rows[0].extra["file_notes_total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_prompt_change_invalidates_cached_digest(
+    monkeypatch, db_session, _trace_blob, _seeded_trace,
+):
+    monkeypatch.setenv("VIBESHUB_OPENAI_API_KEY", "sk-x")
+    monkeypatch.setenv("VIBESHUB_OPENAI_ENDPOINT", "https://e")
+    monkeypatch.setenv("VIBESHUB_OPENAI_MODEL", "gpt-5.5")
+    mock_client = MagicMock()
+    mock_client.responses.parse.return_value = _ok_response(VALID_PAYLOAD)
+    monkeypatch.setattr(
+        "app.agents.digest.pipeline.get_client", lambda: mock_client,
+    )
+    await compute_digest(
+        db_session, _seeded_trace, blob=_trace_blob, subagent_blobs={},
+    )
+    assert mock_client.responses.parse.call_count == 1
+
+    # Same input, edited prompt: the cache must miss and re-call the LLM.
+    monkeypatch.setattr(
+        "app.agents.digest.pipeline.SYSTEM_PROMPT", "a different prompt",
+    )
+    await compute_digest(
+        db_session, _seeded_trace, blob=_trace_blob, subagent_blobs={},
+    )
+    assert mock_client.responses.parse.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_em_dash_swept_from_list_items(
+    monkeypatch, db_session, _trace_blob, _seeded_trace,
+):
+    monkeypatch.setenv("VIBESHUB_OPENAI_API_KEY", "sk-x")
+    monkeypatch.setenv("VIBESHUB_OPENAI_ENDPOINT", "https://e")
+    monkeypatch.setenv("VIBESHUB_OPENAI_MODEL", "gpt-5.5")
+    payload = dict(VALID_PAYLOAD)
+    payload["decisions"] = ["chose A — over B"]
+    payload["learnings"] = ["hook cwd — always ~/.cursor"]
+    mock_client = MagicMock()
+    mock_client.responses.parse.return_value = _ok_response(payload)
+    monkeypatch.setattr(
+        "app.agents.digest.pipeline.get_client", lambda: mock_client,
+    )
+    digest = await compute_digest(
+        db_session, _seeded_trace, blob=_trace_blob, subagent_blobs={},
+    )
+    assert digest.decisions == ["chose A, over B"]
+    assert digest.learnings == ["hook cwd, always ~/.cursor"]

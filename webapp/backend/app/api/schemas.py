@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import logging
+
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+log = logging.getLogger("vibeshub.api.schemas")
 
 
 # Note: IngestRequest is gone — /api/ingest now takes raw tar bytes via the
@@ -28,12 +32,28 @@ class FileNote(BaseModel):
 
 class TraceDigest(BaseModel):
     ask: str
-    decisions: str
-    files: str
+    decisions: list[str] = Field(default_factory=list)
+    dead_ends: list[str] = Field(default_factory=list)
+    learnings: list[str] = Field(default_factory=list)
     tests: str
-    dead_ends: str
     chapters: list[DigestChapter] = Field(default_factory=list)
     file_notes: list[FileNote] = Field(default_factory=list)
+
+
+def _digest_or_none(cls, value):
+    """Old-shape digests (string decisions/dead_ends) linger until the
+    re-digest backfill lands; serialize them as "no digest" instead of
+    failing the whole response."""
+    if value is None or isinstance(value, TraceDigest):
+        return value
+    try:
+        return TraceDigest.model_validate(value)
+    except ValidationError as exc:
+        log.warning(
+            "ai_digest failed TraceDigest validation; hiding digest: %s",
+            str(exc)[:200],
+        )
+        return None
 
 
 class TraceSummary(BaseModel):
@@ -57,6 +77,8 @@ class TraceSummary(BaseModel):
     agent_count: int = 0
     agents: list[AgentSummary] = Field(default_factory=list)
 
+    _coerce_digest = field_validator("ai_digest", mode="before")(_digest_or_none)
+
 
 class IngestResponse(BaseModel):
     trace_id: str
@@ -67,6 +89,8 @@ class IngestResponse(BaseModel):
     # the CLI ingest path and for signed-in web uploads.
     claim_token: str | None = None
     ai_digest: TraceDigest | None = None
+
+    _coerce_digest = field_validator("ai_digest", mode="before")(_digest_or_none)
 
 
 class ClaimRequest(BaseModel):

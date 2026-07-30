@@ -182,3 +182,36 @@ class AgentRun(Base):
     outcome: Mapped[str] = mapped_column(String(32), index=True)
     error_detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     extra: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+
+class SearchDocument(Base):
+    """One searchable snippet exploded from a trace digest.
+
+    Postgres additionally has a generated `search_tsv` tsvector column with
+    a GIN index (created in the migration, deliberately unmapped here);
+    SQLite falls back to LIKE matching in app/search/query.py.
+    """
+
+    __tablename__ = "search_documents"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    repo_full_name: Mapped[str] = mapped_column(String(255), index=True)
+    trace_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("traces.id", ondelete="CASCADE"), index=True
+    )
+    # "summary" | "decision" | "dead_end" | "learning" | "chapter" | "files"
+    source_type: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(Text)
+    # Chapter deep link into the trace viewer (id="chapter-<uuid>").
+    anchor_uuid: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    pr_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    pr_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    # Copied from the trace at index time; refreshed on re-index.
+    is_private: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )

@@ -72,3 +72,17 @@
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
+
+.itemList {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--txt);
+  line-height: 1.55;
+}
+.itemList li {
+  overflow-wrap: anywhere;
+  padding: 2px 0;
+}
+.itemList li::marker {
+  color: var(--faint);
+}

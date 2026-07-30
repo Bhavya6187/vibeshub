@@ -10,6 +10,7 @@ import { SeoHead } from "../components/SeoHead";
 import { TraceManageMenu } from "../components/TraceManageMenu";
 import { TraceViewer } from "../components/trace/TraceViewer";
 import { buildSessionFromRaw } from "../components/trace/sessionFromRaw";
+import { scrollToHashAnchor } from "../components/trace/chapterLink";
 import type { Session } from "../components/trace/types";
 import { useAuth } from "../auth/AuthContext";
 import styles from "./TraceView.module.css";
@@ -69,6 +70,16 @@ export function TraceView() {
     }
     return built;
   }, [body, trace]);
+
+  // Ask citations link to /t/<id>#chapter-<uuid>; scroll there once the
+  // thread exists. rAF lets TraceViewer paint the dividers first.
+  useEffect(() => {
+    if (!session) return;
+    const frame = requestAnimationFrame(() =>
+      scrollToHashAnchor(window.location.hash),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [session]);
 
   if (head.kind === "gate") return <PrivateTraceGate kind={head.gate} />;
   if (head.kind === "notfound") return <NotFound />;

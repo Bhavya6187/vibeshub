@@ -29,7 +29,7 @@ const tool = (uuid: string, ts: string): StreamEvent =>
   }) as StreamEvent;
 
 const digest = (chapters: TraceDigest["chapters"]): TraceDigest =>
-  ({ ask: "a", decisions: "d", files: "f", tests: "t", dead_ends: "e", chapters });
+  ({ ask: "a", decisions: ["d"], dead_ends: ["e"], learnings: [], tests: "t", chapters });
 
 const STREAM: StreamEvent[] = [
   up("a", "2026-01-01T00:00:00Z"),

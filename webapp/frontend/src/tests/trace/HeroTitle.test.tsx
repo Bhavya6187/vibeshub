@@ -149,10 +149,10 @@ describe("HeroTitle", () => {
         trace={makeTrace({
           ai_digest: {
             ask: "Make the trace viewer default to Conversation.",
-            decisions: "",
-            files: "",
+            decisions: [],
+            dead_ends: [],
+            learnings: [],
             tests: "",
-            dead_ends: "",
             chapters: [],
           },
         })}

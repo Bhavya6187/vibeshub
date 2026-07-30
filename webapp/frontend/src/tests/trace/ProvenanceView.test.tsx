@@ -100,7 +100,7 @@ function session(stream: StreamEvent[] = ev()): Session {
 }
 
 const digest: TraceDigest = {
-  ask: "a", decisions: "b", files: "c", tests: "d", dead_ends: "e",
+  ask: "a", decisions: ["b"], dead_ends: ["e"], learnings: [], tests: "d",
   chapters: [],
   file_notes: [{ path: "/r/faq.module.css", caption: "Tint hover states" }],
 };
@@ -260,7 +260,7 @@ describe("ProvenanceView chapter chips", () => {
   // anchored at the prompt "p1" (index 0), so the file's surviving hunk
   // resolves to that chapter.
   const chapterDigest: TraceDigest = {
-    ask: "a", decisions: "b", files: "c", tests: "d", dead_ends: "e",
+    ask: "a", decisions: ["b"], dead_ends: ["e"], learnings: [], tests: "d",
     chapters: [{ anchor_uuid: "p1", title: "Flip default behavior", caption: "" }],
     file_notes: [],
   };
