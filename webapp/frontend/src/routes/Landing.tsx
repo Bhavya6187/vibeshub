@@ -42,7 +42,7 @@ const LANDING_JSONLD = {
   applicationCategory: "DeveloperApplication",
   operatingSystem: "macOS, Linux, Windows",
   description:
-    "Turn your Claude Code and Codex sessions, including every subagent they spawn, into shareable, replayable traces, each with an AI digest of the session. Public and private viewer with GitHub-mirrored access and automatic secret redaction.",
+    "Turn your Claude Code and Codex sessions, including every subagent they spawn, into shareable, replayable traces, each with an AI digest of the session. Traces port between Claude Code and Codex: hand off a live session or resume any trace where it stopped. Public and private viewer with GitHub-mirrored access and automatic secret redaction.",
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
 };
 
@@ -123,7 +123,7 @@ export function Landing() {
     <div className={`page-shell ${styles.ht}`}>
       <SeoHead
         title="vibeshub · share Claude Code & Codex sessions as replayable traces"
-        description="Your Claude Code and Codex sessions, including every subagent they spawn, become shareable, replayable traces, each with an AI digest of the session. Public and private viewer with GitHub-mirrored access and automatic secret redaction."
+        description="Your Claude Code and Codex sessions, including every subagent they spawn, become shareable, replayable traces, each with an AI digest of the session. Traces port between Claude Code and Codex: hand off a live session or resume any trace where it stopped. Public and private viewer with GitHub-mirrored access and automatic secret redaction."
         path="/"
         bareTitle
         jsonLd={LANDING_JSONLD}
@@ -177,7 +177,9 @@ export function Landing() {
                 Every PR your team opens can carry the Claude Code or Codex
                 session that built it, every subagent included. Reviewers and
                 new teammates replay how it actually shipped, instead of
-                reverse-engineering the final diff.
+                reverse-engineering the final diff. And when the work should
+                keep going, any trace comes back down as a live, resumable
+                session in either CLI.
               </p>
               <div className={styles.ctas}>
                 <a className={styles.cta1} href="#install">
@@ -267,7 +269,7 @@ export function Landing() {
         {/* ====================== collaborate (teams) ====================== */}
         <section className={styles.section} id="teams">
           <div className={`${styles.wrap} ${styles.collab}`}>
-            <SectionHead title="Collaborate" count="01 / 05" />
+            <SectionHead title="Collaborate" count="01 / 06" />
             <div className={styles.collabGrid}>
               <div>
                 <h3 className={styles.bigq}>
@@ -310,7 +312,7 @@ export function Landing() {
                       <strong>Every agent, one archive.</strong> Some of the
                       team runs Claude Code, some runs Codex. Every PR carries
                       its session either way, so it all lands in one searchable
-                      place.
+                      place. Sessions even hand off between the two.
                     </span>
                   </li>
                   <li>
@@ -386,7 +388,7 @@ export function Landing() {
         {/* ====================== three ways in ====================== */}
         <section className={styles.section} id="ways">
           <div className={`${styles.wrap} ${styles.ways}`}>
-            <SectionHead title="Three ways in" count="02 / 05" />
+            <SectionHead title="Three ways in" count="02 / 06" />
             <p className={styles.slede}>
               Three ways to get a session onto vibeshub, from fully automatic
               to a one-off upload. Reach for whichever suits the moment, they
@@ -452,13 +454,81 @@ export function Landing() {
           </div>
         </section>
 
+        {/* ====================== portable sessions (trace porting) ====================== */}
+        <section className={styles.section} id="porting">
+          <div className={`${styles.wrap} ${styles.ways}`}>
+            <SectionHead title="Portable sessions" count="03 / 06" />
+            <p className={styles.slede}>
+              A trace is not just a replay. Any trace can come back down as a
+              live session and keep going, in Claude Code or Codex, whichever
+              the next person runs.
+            </p>
+            <div className={styles.waysGrid}>
+              <div className={styles.way}>
+                <div className={styles.kicker}>01 / Hand off</div>
+                <h3>
+                  Leave for Codex mid-session with <code>/handoff</code>
+                </h3>
+                <p>
+                  One command uploads the session, converts it, and prints the
+                  exact resume command. Quit Claude Code, paste it, and Codex
+                  continues the same conversation.
+                </p>
+                <pre className={styles.wayMini}>
+                  <span className={styles.wayMiniCmd}>&gt; /handoff</span>
+                  {"\n"}
+                  <span className={styles.ok}>
+                    → uploaded · codex resume 0198a4 ✓
+                  </span>
+                </pre>
+              </div>
+              <div className={styles.way}>
+                <div className={styles.kicker}>02 / Resume</div>
+                <h3>
+                  Pull any trace back down with <code>/import</code>
+                </h3>
+                <p>
+                  Point it at a vibeshub URL and the trace becomes a resumable
+                  session in your checkout. Pick up a teammate&rsquo;s PR
+                  exactly where they stopped, context intact.
+                </p>
+                <pre className={styles.wayMini}>
+                  <span className={styles.wayMiniCmd}>
+                    &gt; /import vibeshub.ai/acme/…/8m2plq
+                  </span>
+                  {"\n"}
+                  <span className={styles.ok}>→ imported · ready to resume ✓</span>
+                </pre>
+              </div>
+              <div className={styles.way}>
+                <div className={styles.kicker}>03 / Both directions</div>
+                <h3>
+                  Move either way with <code>/import-trace</code>
+                </h3>
+                <p>
+                  The generic form runs in both CLIs and targets either one,{" "}
+                  <code>--to codex</code> or <code>--to claude</code>.
+                  Conversion is resume-grade in both directions.
+                </p>
+                <pre className={styles.wayMini}>
+                  <span className={styles.wayMiniCmd}>
+                    &gt; /import-trace &lt;trace-url&gt; --to codex
+                  </span>
+                  {"\n"}
+                  <span className={styles.ok}>→ converted · resume-grade ✓</span>
+                </pre>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* ====================== browse ====================== */}
         <BrowseSection data={browse} />
 
         {/* ====================== privacy (access + redaction) ====================== */}
         <section className={styles.section} id="privacy">
           <div className={`${styles.wrap} ${styles.priv}`}>
-            <SectionHead title="Privacy" count="04 / 05" />
+            <SectionHead title="Privacy" count="05 / 06" />
             <div className={styles.privGrid}>
               <div>
                 <h3 className={styles.bigq}>
@@ -540,7 +610,7 @@ export function Landing() {
         {/* ====================== install ====================== */}
         <section className={styles.section} id="install">
           <div className={`${styles.wrap} ${styles.install}`}>
-            <SectionHead title="Install" count="05 / 05" />
+            <SectionHead title="Install" count="06 / 06" />
             <div className={styles.installGrid}>
               <div>
                 <h3 className={styles.bigq}>
@@ -642,8 +712,8 @@ export function Landing() {
         <footer>
           <div className={`${styles.wrap} ${styles.foot}`}>
             <span className={styles.blurb}>
-              vibeshub · public &amp; private viewer for Claude Code &amp;
-              Codex traces
+              vibeshub · public &amp; private viewer for Claude Code, Codex
+              &amp; Cursor traces
             </span>
             <nav className={styles.footLinks} aria-label="Footer">
               <a href="https://github.com/vibeshub/vibeshub">GitHub</a>
@@ -674,7 +744,7 @@ function BrowseSection({ data }: BrowseSectionProps) {
   return (
     <section className={styles.section} id="browse">
       <div className={`${styles.wrap} ${styles.browse}`}>
-        <SectionHead title="Browse public" count="03 / 05" />
+        <SectionHead title="Browse public" count="04 / 06" />
         <p className={styles.slede}>
           vibeshub, built with{" "}
           <Link to={`/${BROWSE_FULL}`} className={styles.grn}>
@@ -773,12 +843,10 @@ function BrowseSection({ data }: BrowseSectionProps) {
                   <span className={styles.cName}>codex</span>
                   <span className={styles.cTag}>active</span>
                 </div>
-                <div className={`${styles.cRow} ${styles.cRowDim}`}>
+                <div className={styles.cRow}>
                   <span className={styles.cAv}>cu</span>
                   <span className={styles.cName}>cursor</span>
-                  <span className={`${styles.cTag} ${styles.cTagOff}`}>
-                    contribute
-                  </span>
+                  <span className={styles.cTag}>beta</span>
                 </div>
               </div>
             </div>

@@ -731,9 +731,6 @@ a.wayMini:hover {
 a.cRow:hover .cName {
   color: var(--strong);
 }
-.cRowDim {
-  opacity: 0.55;
-}
 .cAv {
   width: 22px;
   height: 22px;
@@ -765,10 +762,6 @@ a.cRow:hover .cName {
   color: var(--acc);
   border: 1px solid color-mix(in oklab, var(--acc) 40%, transparent);
   padding: 1px 7px;
-}
-.cTagOff {
-  color: var(--faint);
-  border-color: var(--line);
 }
 
 /* ── privacy ─────────────────────────────────────── */
