@@ -178,8 +178,8 @@ export function Landing() {
                 session that built it, every subagent included. Reviewers and
                 new teammates replay how it actually shipped, instead of
                 reverse-engineering the final diff. And when the work should
-                keep going, any trace comes back down as a live, resumable
-                session in either CLI.
+                keep going, Claude Code and Codex traces come back down as
+                live, resumable sessions in either CLI.
               </p>
               <div className={styles.ctas}>
                 <a className={styles.cta1} href="#install">
@@ -459,9 +459,9 @@ export function Landing() {
           <div className={`${styles.wrap} ${styles.ways}`}>
             <SectionHead title="Portable sessions" count="03 / 06" />
             <p className={styles.slede}>
-              A trace is not just a replay. Any trace can come back down as a
-              live session and keep going, in Claude Code or Codex, whichever
-              the next person runs.
+              A trace is not just a replay. Claude Code and Codex traces can
+              come back down as live sessions and keep going in either CLI.
+              Cursor traces can continue in Codex too.
             </p>
             <div className={styles.waysGrid}>
               <div className={styles.way}>
@@ -485,16 +485,17 @@ export function Landing() {
               <div className={styles.way}>
                 <div className={styles.kicker}>02 / Resume</div>
                 <h3>
-                  Pull any trace back down with <code>/import</code>
+                  Pull a trace into Claude Code with <code>/import</code>
                 </h3>
                 <p>
                   Point it at a vibeshub URL and the trace becomes a resumable
                   session in your checkout. Pick up a teammate&rsquo;s PR
-                  exactly where they stopped, context intact.
+                  where they stopped, with the conversation preserved. When
+                  providers differ, their private reasoning stays behind.
                 </p>
                 <pre className={styles.wayMini}>
                   <span className={styles.wayMiniCmd}>
-                    &gt; /import vibeshub.ai/acme/…/8m2plq
+                    &gt; /import https://vibeshub.ai/t/8m2plq
                   </span>
                   {"\n"}
                   <span className={styles.ok}>→ imported · ready to resume ✓</span>
@@ -503,19 +504,22 @@ export function Landing() {
               <div className={styles.way}>
                 <div className={styles.kicker}>03 / Both directions</div>
                 <h3>
-                  Move either way with <code>/import-trace</code>
+                  Move between Claude Code and Codex
                 </h3>
                 <p>
-                  The generic form runs in both CLIs and targets either one,{" "}
-                  <code>--to codex</code> or <code>--to claude</code>.
-                  Conversion is resume-grade in both directions.
+                  Both CLIs can target <code>--to codex</code> or{" "}
+                  <code>--to claude</code>. Claude Code uses{" "}
+                  <code>/import-trace</code>; in Codex, run the namespaced{" "}
+                  <code>/vibeshub:import-trace</code> skill.
                 </p>
                 <pre className={styles.wayMini}>
                   <span className={styles.wayMiniCmd}>
                     &gt; /import-trace &lt;trace-url&gt; --to codex
                   </span>
                   {"\n"}
-                  <span className={styles.ok}>→ converted · resume-grade ✓</span>
+                  <span className={styles.wayMiniCmd}>
+                    &gt; /vibeshub:import-trace &lt;trace-url&gt; --to claude
+                  </span>
                 </pre>
               </div>
             </div>
