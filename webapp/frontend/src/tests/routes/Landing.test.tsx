@@ -71,6 +71,23 @@ describe("Landing", () => {
     ).toBeInTheDocument();
   });
 
+  it("advertises trace porting between Claude Code and Codex", () => {
+    const { container } = renderPage();
+
+    expect(screen.getByText(/Portable sessions/i)).toBeInTheDocument();
+    expect(container).toHaveTextContent("/handoff");
+    expect(container).toHaveTextContent("codex resume");
+    expect(container).toHaveTextContent("/import-trace");
+  });
+
+  it("lists cursor as a supported platform, not a contribution ask", () => {
+    const { container } = renderPage();
+
+    expect(screen.getByText("cursor")).toBeInTheDocument();
+    expect(screen.getByText("beta")).toBeInTheDocument();
+    expect(container).not.toHaveTextContent("contribute");
+  });
+
   it("advertises plugin version 0.6.1 across landing install surfaces", () => {
     const { container } = renderPage();
 
