@@ -1,9 +1,10 @@
 # Trace digest agent
 
-Generates a 5-line digest + 3-8 semantic chapter anchors for an uploaded
-trace (Claude Code, Codex, or Cursor — always Claude-shaped after conversion).
-Surfaces in the trace viewer's Hero panel and in the PR comment body posted
-by the plugin.
+Generates a 5-line digest, 3-8 semantic chapter anchors, and up to 20
+per-file captions (`file_notes`) for an uploaded trace (Claude Code, Codex,
+or Cursor — always Claude-shaped after conversion). The bullets and chapters
+surface in the trace viewer's Hero panel and in the PR comment body posted by
+the plugin; the file captions surface in the Provenance (Changes) view.
 
 ## Flow
 
@@ -22,18 +23,35 @@ by the plugin.
    `tests/test_cursor_convert.py`. Subagent blobs are converted the same
    way.
 3. `distill_with_uuids` (in `distill.py`) walks the JSONL once and
-   classifies every event into a tier (see spec §5). Output is a single
-   string with each retained event prefixed by `[uuid]`.
+   classifies every event into a tier (see spec §5). Before tiering, it
+   strips the harness's own injected noise, which was previously billed
+   and read as user content: `isMeta` user records (replayed Skill
+   bodies) are dropped, `<system-reminder>` spans are removed,
+   task-notification / slash-command / local-command-output wrappers are
+   compacted to one-liners, and user text is capped at 2k chars with
+   head+tail retention. Output is a single string with each retained
+   event prefixed by `[uuid]`.
+
+   Any change to the distiller changes `sha256(distilled)`, which
+   invalidates every persisted `digest_input_hash`: existing traces
+   re-digest on their next upload, and a backfill is needed to refresh
+   traces that are never re-uploaded.
 4. `pipeline.compute_digest` computes `sha256(distilled)` and compares
    to `trace.digest_input_hash`. Match → reuse persisted digest,
-   `outcome=skip_unchanged`, no LLM call. An empty distillate records
-   `outcome=skip_empty` and returns without an LLM call.
+   `outcome=skip_unchanged`, no LLM call. Otherwise the config check
+   runs next (`outcome=skip_no_config` when any of the three env vars
+   is unset), and only then the empty-distillate check
+   (`outcome=skip_empty`); `skip_empty` therefore never appears on an
+   instance without OpenAI config.
 5. Otherwise: calls OpenAI `responses.parse` with `text_format=Digest`
    (Structured Outputs, so the schema is enforced server-side) and
    `reasoning.effort=low`.
 6. Reads the already-validated `Digest` from `response.output_parsed`
    (None → `outcome=fail_schema`). Drops chapters whose `anchor_uuid`
-   isn't in the distilled UUID surface. Strips em-dashes from every
+   isn't in the distilled UUID surface, and drops file_notes whose
+   `path` isn't in `distill.edited_paths()` (the set of paths touched
+   by Write/Edit/MultiEdit across the main and subagent streams); both
+   kept/total counts land in `extra`. Strips em-dashes from every
    string field.
 7. Persists `digest_json` and `digest_input_hash` on the Trace row.
 8. Records the run in `agent_run` via `record_run`.
@@ -56,6 +74,11 @@ still succeeds, viewer hides the DigestPanel.
 - **All chapter anchors invalid** — digest persists with `chapters=[]`,
   `outcome=ok`, `extra.chapters_kept=0`. The DigestPanel still renders
   the 5 bullets; just no "Jump to" rail.
+- **All file_notes paths invalid** — digest persists with
+  `file_notes=[]`, `outcome=ok`, `extra.file_notes_kept=0`. The
+  Provenance view falls back to uncaptioned file diffs. Most common
+  when the model invents a path, or when the trace's edits used a tool
+  outside `_EDIT_TOOLS` (Write / Edit / MultiEdit).
 - **LLM call fails / output is malformed** — `outcome=fail_call` /
   `fail_schema`. The viewer shows the existing Outcome card without a
   DigestPanel; the PR comment falls back to the one-line trace link.
@@ -88,9 +111,11 @@ WHERE trace_id = '<short_id>' ORDER BY created_at;
 
 ## Adding a new agent
 
-1. Create `webapp/backend/app/agents/<name>/` with the same five files
-   (`__init__.py`, `schema.py`, `pipeline.py`, `prompt.py`, README).
+1. Create `webapp/backend/app/agents/<name>/` with the same file layout
+   (`__init__.py`, `schema.py`, `pipeline.py`, `prompt.py`, README,
+   plus a pure input-shaping module like digest's `distill.py` if the
+   agent needs one).
 2. Reuse `app.agents._client.get_client/get_model` and
    `app.agents._usage.record_run`. The `Outcome` enum is shared.
-3. Add a column to `agent_run.extra` for any per-agent metadata; no
-   schema change required.
+3. Add keys to the `agent_run.extra` JSON payload for any per-agent
+   metadata; no schema change required.

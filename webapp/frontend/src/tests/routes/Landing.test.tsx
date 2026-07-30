@@ -71,12 +71,12 @@ describe("Landing", () => {
     ).toBeInTheDocument();
   });
 
-  it("advertises plugin version 0.4.0 across landing install surfaces", () => {
+  it("advertises plugin version 0.6.1 across landing install surfaces", () => {
     const { container } = renderPage();
 
-    expect(screen.getByText("0.4.0")).toBeInTheDocument();
-    expect(container).toHaveTextContent("USER_AGENT=vibeshub/0.4");
-    expect(container).not.toHaveTextContent("0.3.1");
-    expect(container).not.toHaveTextContent("vibeshub/0.3");
+    expect(screen.getByText("0.6.1")).toBeInTheDocument();
+    expect(container).toHaveTextContent("USER_AGENT=vibeshub/0.6");
+    expect(container).not.toHaveTextContent("0.4.0");
+    expect(container).not.toHaveTextContent("vibeshub/0.4");
   });
 });

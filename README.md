@@ -22,6 +22,10 @@
 A public viewer for AI coding traces, attached to the pull requests they produced. Each platform's plugin uploads the session transcript on every PR, and a backend summary agent distills it into a readable <b>digest</b>: the ask, key decisions, dead ends, and chapter anchors.
 </p>
 
+<p align="center">
+Traces are portable, not just viewable: hand off a live session from Claude Code to Codex and keep going there, or pull a trace back down into either CLI and resume it. See <a href="#trace-porting">Trace porting</a>.
+</p>
+
 <!-- PRODUCT SCREENSHOT -->
 <p align="center">
   <a href="https://vibeshub.ai">
@@ -35,7 +39,7 @@ A public viewer for AI coding traces, attached to the pull requests they produce
 
 ## Quick start
 
-Install the plugin in your AI coding tool. The next time you run `gh pr create`, your trace is uploaded and linked automatically.
+Install the plugin in your AI coding tool. The next time you run `gh pr create` (or push a branch that already has a PR), your trace is uploaded and linked automatically.
 
 ```
 /plugin marketplace add vibeshub/vibeshub
@@ -66,7 +70,7 @@ No new workflow, no new identity. Run `gh pr create` inside an AI coding session
 
 **Hook captures the session.**
 
-A `PostToolUse` hook fires when `gh pr create` finishes and finds the matching transcript.
+A `PostToolUse` hook fires when `gh pr create`, `gh pr edit`, or `git push` finishes and finds the matching transcript.
 
 `~/.claude/projects/…/*.jsonl`
 
@@ -100,13 +104,13 @@ The full ten-step pipeline (digest agent, private-repo gating, web upload) is in
 
 ## Trace porting
 
-A trace is not just a replay. Any trace can come back down as a live session and continue from where it stopped, in the same CLI or the other one.
+A trace is not just a replay. A trace can come back down as a live session and continue from where it stopped, moving between Claude Code and Codex in either direction.
 
-- `/handoff` (Claude Code) uploads this session, places the converted Codex session on this machine, and prints the exact `codex resume <id>` that continues the same conversation. Edit, `/handoff`, quit, paste one command, keep going in Codex.
-- `/import <trace-url-or-id> [--checkout]` (Claude Code) pulls any vibeshub trace, including one handed off to Codex, back down as a resumable session in the current project.
-- `/import-trace <trace-url-or-id> --to codex|claude` is the generic form, available in both Claude Code and Codex.
+- **Claude Code → Codex:** `/handoff` uploads this session, places the converted Codex session on this machine, and prints the exact `codex resume <id>` that continues the same conversation. Edit, `/handoff`, quit, paste one command, keep going in Codex.
+- **Back into Claude Code:** `/import <trace-url-or-id> [--checkout]` (run in Claude Code) pulls a vibeshub trace, including one handed off to or recorded in Codex, back down as a resumable session in the current project.
+- **Either direction:** `/import-trace <trace-url-or-id> --to codex|claude` is the generic form, available in both CLIs (`/vibeshub:import-trace` in Codex).
 
-Conversion between Claude Code and Codex is resume-grade in both directions; provider-encrypted reasoning cannot cross over, and Cursor traces are view-grade only. Flags and caveats are in [plugins/cli/README.md](plugins/cli/README.md#manual-import-command).
+Conversion between Claude Code and Codex is resume-grade in both directions; provider-encrypted reasoning cannot cross over, and Cursor traces can be ported to Codex but have no Claude Code target. Flags and caveats are in [plugins/cli/README.md](plugins/cli/README.md#manual-import-command).
 
 ## Project reference
 
@@ -125,8 +129,8 @@ vibeshub/
 │   │                   # GitHub OAuth, session cookies, repo-access gating, blob storage
 │   │                   # agents/digest: trace summary agent + chapter anchors
 │   └── frontend/       # React + Vite SPA; build copies dist/ → backend/frontend_dist/
-│                       # Landing, /home, /vibeviewer, /privacy, /:owner, /:owner/:repo,
-│                       # /:owner/:repo/pull/:number, /t/:shortId trace viewer
+│                       # Landing, /home, /vibeviewer, /privacy, /faq, /contact, /:owner,
+│                       # /:owner/:repo, /:owner/:repo/pull/:number[/:shortId], /t/:shortId viewer
 ├── cursor-plugin/      # generated Cursor plugin snapshot, mirrored to vibeshub/vibeshub-cursor
 ├── scripts/            # sync-cursor-plugin.py, regenerates that snapshot
 ├── deploy/azure/       # Dockerfile + deploy.sh + Portal/CLI walkthroughs
@@ -138,7 +142,7 @@ Per-component docs:
 - [webapp/backend/README.md](webapp/backend/README.md), env vars, OAuth setup, local run, tests
 - [webapp/backend/app/agents/digest/README.md](webapp/backend/app/agents/digest/README.md), summary agent flow, OpenAI env vars, degradation modes, operations queries
 - [webapp/frontend/README.md](webapp/frontend/README.md), routes, dev server, build, tests
-- [plugins/cli/README.md](plugins/cli/README.md), install, hook config, slash command
+- [plugins/cli/README.md](plugins/cli/README.md), install, hook config, slash commands
 
 **Versioning:** one product version for plugin + webapp. Source of truth is
 `PLUGIN_VERSION` in [`plugins/cli/vibeshub_client/version.py`](plugins/cli/vibeshub_client/version.py);
@@ -158,7 +162,7 @@ python3.13 -m venv env   # or python3.12 -m venv env
 ./env/bin/pip install -e "webapp/backend[dev]"
 
 # Backend (FastAPI on :8000), in-memory SQLite, /tmp blob dir
-./env/bin/uvicorn app.main:app --reload --app-dir webapp/backend
+VIBESHUB_COOKIE_SECURE=false ./env/bin/uvicorn app.main:app --reload --app-dir webapp/backend
 
 # Frontend (Vite on :5173), proxies /api → backend:8000
 cd webapp/frontend && npm install && npm run dev
@@ -166,7 +170,7 @@ cd webapp/frontend && npm install && npm run dev
 
 The plugin hooks run on the user's `python3` (3.9+). The backend requires 3.12–3.13.
 
-GitHub OAuth is optional locally: auth routes return `503 oauth_not_configured` until `VIBESHUB_GITHUB_OAUTH_CLIENT_ID`, `VIBESHUB_SESSION_SECRET`, and `VIBESHUB_TOKEN_ENCRYPTION_KEY` are set. See the [backend README](webapp/backend/README.md) for the full list.
+`VIBESHUB_COOKIE_SECURE=false` is required locally: with the production default (`true`), the app refuses to boot unless `VIBESHUB_SESSION_SECRET` and `VIBESHUB_TOKEN_ENCRYPTION_KEY` are set. GitHub sign-in itself stays optional; its routes return `503 oauth_not_configured` until the OAuth vars are set. See the [backend README](webapp/backend/README.md) for the full list.
 
 </details>
 

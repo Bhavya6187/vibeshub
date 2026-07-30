@@ -46,6 +46,11 @@ az postgres flexible-server db create -g $RG -s $PG -d $DB_NAME
 # Storage account + blob container for trace bodies
 az storage account create -n $STORAGE -g $RG -l $LOC --sku Standard_LRS --kind StorageV2
 az storage container create --account-name $STORAGE -n $CONTAINER --auth-mode login
+# If this fails with AuthorizationPermissionMismatch, grant yourself data-plane
+# access first (control-plane Owner is not enough), then retry:
+#   ME=$(az ad signed-in-user show --query id -o tsv)
+#   az role assignment create --assignee-object-id $ME --assignee-principal-type User \
+#     --role "Storage Blob Data Contributor" --scope $(az storage account show -n $STORAGE -g $RG --query id -o tsv)
 
 # User-assigned managed identity
 MI_ID=$(az identity create -g $RG -n $MI --query id -o tsv)
@@ -57,6 +62,12 @@ STORAGE_ID=$(az storage account show -n $STORAGE -g $RG --query id -o tsv)
 az role assignment create \
   --assignee-object-id $MI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
   --role "Storage Blob Data Contributor" --scope $STORAGE_ID
+
+# Grant the MI pull access to the registry (Container Apps pulls with this identity)
+ACR_ID=$(az acr show -n $ACR -g $RG --query id -o tsv)
+az role assignment create \
+  --assignee-object-id $MI_PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
+  --role "AcrPull" --scope $ACR_ID
 
 # Container Apps environment
 az containerapp env create -n $APP_ENV -g $RG -l $LOC
@@ -78,7 +89,7 @@ docker buildx build --platform linux/amd64 \
 
 `--platform linux/amd64` is required on Apple Silicon (or any arm64 host) — Container Apps rejects arm64 images with *"Selected tag uses an invalid architecture 'arm64'."* `buildx ... --push` builds and pushes in one step, so no separate `docker push` is needed.
 
-If you'd rather not run Docker locally, use `az acr build -r $ACR -t vibeshub:latest --file deploy/azure/Dockerfile webapp/backend` — ACR builds on amd64 by default. The provided [./deploy.sh](./deploy.sh) wraps these steps end-to-end.
+If you'd rather not run Docker locally, use `az acr build -r $ACR -t vibeshub:latest --file deploy/azure/Dockerfile webapp/backend` — ACR builds on amd64 by default. The provided [./deploy.sh](./deploy.sh) wraps steps 2 and 3 (build the SPA, `az acr build`, create-or-update the Container App) once the infrastructure from step 1 exists. Before running it, copy [`./.env.example`](./.env.example) to `deploy/azure/.env` and fill it in, then edit the `RG` / `ACR` / `APP` variables at the top of the script to match the names you chose above (they default to `vibeshub`).
 
 ## 3. Deploy the container app
 
@@ -90,6 +101,8 @@ PUBLIC_URL="https://${APP}.<region-suffix>.azurecontainerapps.io"   # fill in af
 
 SESSION_SECRET=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')
 TOKEN_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')
+# The Fernet command needs the `cryptography` package: use the repo venv
+# (./env/bin/python) or `pip install cryptography` first. On macOS use python3.
 OAUTH_CLIENT_ID='<github-oauth-client-id>'
 OAUTH_CLIENT_SECRET='<github-oauth-client-secret>'
 GITHUB_FALLBACK_TOKEN='<server-pat>'   # any token; no scopes needed for public data
@@ -128,6 +141,13 @@ az containerapp update -n $APP -g $RG \
   --set-env-vars VIBESHUB_PUBLIC_BASE_URL="https://$FQDN"
 ```
 
+## 3b. (Optional) Automate deploys from GitHub Actions
+
+[`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml) runs `deploy/azure/deploy.sh` on every push to `main`. To use it in a fork, set four repository secrets:
+
+- `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` — an app registration with a GitHub OIDC federated credential and Contributor on the resource group. **This client ID is the CI service principal, not the container's managed-identity `AZURE_CLIENT_ID` env var above.**
+- `DEPLOY_ENV_FILE` — the full contents of your `deploy/azure/.env`.
+
 ## 4. Configure the plugin to point at your deployment
 
 On each developer's machine:
@@ -136,7 +156,7 @@ On each developer's machine:
 export VIBESHUB_SERVER_URL="https://$FQDN"
 ```
 
-Then install the Claude Code plugin per [../../plugins/cli/README.md](../../plugins/cli/README.md).
+Then install the vibeshub plugin (Claude Code, Codex, or Cursor) per [../../plugins/cli/README.md](../../plugins/cli/README.md).
 
 ## Environment variables (reference)
 
@@ -147,8 +167,8 @@ Then install the Claude Code plugin per [../../plugins/cli/README.md](../../plug
 | `VIBESHUB_AZURE_STORAGE_ACCOUNT_URL` | `https://<account>.blob.core.windows.net`; auths via managed identity |
 | `VIBESHUB_AZURE_STORAGE_CONNECTION_STRING` | Alternative auth (account key or Azurite); ignored if the account URL is set |
 | `AZURE_CLIENT_ID` | Client ID of the user-assigned MI when more than one is bound |
-| `VIBESHUB_PUBLIC_BASE_URL` | Origin used to build the `trace_url` returned by the API |
-| `VIBESHUB_GITHUB_OAUTH_CLIENT_ID` / `_SECRET` | GitHub OAuth app credentials — required for the "Sign in with GitHub" flow; absent → `/api/auth/*` returns 503 |
+| `VIBESHUB_PUBLIC_BASE_URL` | Origin used to build the `trace_url` returned by the API **and** the GitHub OAuth `redirect_uri`; must exactly match the callback URL registered on the OAuth app |
+| `VIBESHUB_GITHUB_OAUTH_CLIENT_ID` / `_SECRET` | GitHub OAuth app credentials, required for the "Sign in with GitHub" flow; if the client ID (or `VIBESHUB_SESSION_SECRET`) is empty, `/api/auth/github/login` and `/api/auth/github/callback` return `503 oauth_not_configured` (`/api/auth/me` and `/logout` still work) |
 | `VIBESHUB_GITHUB_FALLBACK_TOKEN` | Server-side PAT used to read public GitHub data for anonymous viewers; no scopes needed |
 | `VIBESHUB_SESSION_SECRET` | Signs the short-lived OAuth state cookie (`python -c 'import secrets; print(secrets.token_urlsafe(48))'`) |
 | `VIBESHUB_TOKEN_ENCRYPTION_KEY` | Fernet key used to encrypt stored OAuth access tokens (`python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`); comma-separate `new,old` to rotate |
@@ -158,6 +178,6 @@ See [../../webapp/backend/README.md](../../webapp/backend/README.md) for the ful
 
 ## Troubleshooting
 
-The container runs a startup credential smoke-check before serving traffic: it verifies the DB is reachable (`SELECT 1`) and the Azure Blob container is reachable (`get_container_properties`). If a deploy is marked unhealthy immediately and rolls back, check the container log stream for lines starting with `smoke-check:` — those will show which dependency (`db` or `blob`) failed and the underlying error.
+The container runs a startup credential smoke-check before serving traffic: it verifies the DB is reachable (`SELECT 1`) and the Azure Blob container is reachable (`get_container_properties`). If a deploy is marked unhealthy immediately and rolls back, check the container log stream. Passing checks log `smoke-check: db OK` / `smoke-check: blob OK`; a failure instead surfaces as an uncaught `SmokeCheckError` traceback whose message begins with `db:` or `blob:` followed by the underlying error (passwords in the DSN are redacted). A `smoke-check: db OK` line with no `smoke-check: blob OK` after it means blob was the failure.
 
 Operators no longer need to run `check_db.py` for routine "is DB reachable" verification — the startup logs cover it. `check_db.py` is still useful for deeper one-off diagnosis.

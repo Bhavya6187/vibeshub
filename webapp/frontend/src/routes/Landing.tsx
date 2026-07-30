@@ -7,7 +7,7 @@ import type { RepoOverview, TraceSummary } from "../types";
 import styles from "./Landing.module.css";
 
 // Keep in sync with plugins/cli/.claude-plugin/plugin.json.
-const PLUGIN_VERSION = "0.4.0";
+const PLUGIN_VERSION = "0.6.1";
 const PLUGIN_MINOR_VERSION = PLUGIN_VERSION.split(".").slice(0, 2).join(".");
 
 // The runnable install commands - single source of truth for both copy buttons.

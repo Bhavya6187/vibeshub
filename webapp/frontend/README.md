@@ -18,19 +18,27 @@ Requires **Node.js 22** (matches CI in [`.github/workflows/deploy.yml`](../../.g
 | `/contact` | Contact |
 | `/faq` | FAQ |
 | `/:owner` | User/org profile (traces + repo breakdown + GitHub stats) |
-| `/:owner/:repo` | Repo overview (traces + contributors) |
+| `/:owner/:repo` | Repo overview (traces + pull requests + contributors) |
 | `/:owner/:repo/pull/:number` | All traces attached to a PR |
 | `/:owner/:repo/pull/:number/:shortId` | Trace viewer (PR context) |
 | `/t/:shortId` | Trace viewer (standalone link) |
+| `*` | 404 (`NotFound`) |
+
+The landing page also links to `/blog`, which is **not** a React route — it is
+served by the edge in front of vibeshub.ai and 404s under the local dev server.
 
 ## Source layout
 
 ```
 src/
+├── App.tsx              # Route table (react-router)
+├── main.tsx             # Entry point
 ├── routes/              # One page component per URL (Landing, TraceView, …)
 ├── components/          # Shared chrome (PageTopbar, AuthWidget, ThemeToggle, …)
-│   └── trace/           # Trace viewer only — parser, Hero, DigestPanel, ToolCard, …
-├── auth/                # AuthContext + session helpers
+│   └── trace/           # Trace viewer only — parser, Hero, DigestPanel, ProvenanceView, …
+│       └── tool/        # Per-tool renderers (ToolCard, ToolGroup, DiffView, BashBody, …)
+├── auth/                # AuthContext (AuthProvider + useAuth)
+├── assets/              # Landing hero screenshots (light + dark)
 ├── styles/              # Global CSS + design tokens (theme via data-theme)
 ├── api.ts               # Fetch wrappers for /api/*
 ├── useTheme.ts          # Light/dark theme controller
@@ -39,9 +47,15 @@ src/
 ```
 
 `App.tsx` wires routes → `src/routes/*`. The viewer itself lives under
-`src/components/trace/` (`TraceViewer.tsx` and friends): prompt rail, outcome
-cards, collapsible tool calls, nested subagent threads, activity timeline,
-slash-command chips, and syntax-highlighted code/diffs.
+`src/components/trace/` (`TraceViewer.tsx` and friends). Above the body sits a
+sticky two-tab bar ([`ThreadControls.tsx`](src/components/trace/ThreadControls.tsx)):
+**Conversation** (the default) and **Changes** (shown only when the session
+touched files). `#changes` in the URL deep-links into the Changes tab; every
+other hash lands on Conversation. Conversation renders the prompt rail,
+AI-digest chapter rail, outcome cards, collapsible tool calls, nested subagent
+threads, activity timeline, slash-command chips, and syntax-highlighted
+code/diffs. Changes renders `ProvenanceView`: per-file net diffs with
+jump-back links into the conversation.
 
 ## Theme and persisted state
 
@@ -111,6 +125,7 @@ first, or free the port.
 npm run build:deploy
 ```
 
-This runs `vite build`, then copies `dist/` into `webapp/backend/frontend_dist/`.
+This runs the full build (`tsc -b` typecheck, then `vite build`), then clears
+`webapp/backend/frontend_dist/` and copies `dist/` into it.
 The Azure deploy Dockerfile at [`deploy/azure/Dockerfile`](../../deploy/azure/Dockerfile)
 picks up the `frontend_dist/` directory, and FastAPI serves it as the SPA.

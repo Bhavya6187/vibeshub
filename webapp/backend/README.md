@@ -17,24 +17,41 @@ python3.13 -m venv env   # or python3.12 -m venv env
 ./env/bin/pip install -e "webapp/backend[dev]"
 
 cd webapp/backend
-../../env/bin/uvicorn app.main:app --reload
+VIBESHUB_COOKIE_SECURE=false ../../env/bin/uvicorn app.main:app --reload
 ```
+
+`VIBESHUB_COOKIE_SECURE=false` is required: with the default (`true`, the
+production setting) the app refuses to boot unless `VIBESHUB_SESSION_SECRET`
+and `VIBESHUB_TOKEN_ENCRYPTION_KEY` are both set
+(`app/deps.py::_validate_auth_config`); with `false` it logs a warning and
+starts.
 
 By default the server uses an in-memory SQLite DB and a temp blob dir, both of
 which reset on restart. Set `VIBESHUB_DATABASE_URL=postgresql+psycopg://...`
 and `VIBESHUB_BLOB_DIR=/path/to/dir` for persistent local dev.
+
+Only in-memory SQLite gets its schema auto-created. Any other database
+(Postgres, or file-backed SQLite) must be migrated first:
+
+```bash
+cd webapp/backend
+VIBESHUB_DATABASE_URL=postgresql+psycopg://... ../../env/bin/alembic upgrade head
+```
+
+The deployed container runs the same command before uvicorn
+([`deploy/azure/Dockerfile`](../../deploy/azure/Dockerfile)).
 
 To use Azure Blob Storage instead of a local directory, install the `[azure]`
 extra and set `VIBESHUB_AZURE_BLOB_CONTAINER` plus either
 `VIBESHUB_AZURE_STORAGE_ACCOUNT_URL` (managed identity, recommended for prod)
 or `VIBESHUB_AZURE_STORAGE_CONNECTION_STRING` (local/dev with Azurite).
 
-GitHub sign-in is optional locally: until `VIBESHUB_GITHUB_OAUTH_CLIENT_ID`,
-`VIBESHUB_SESSION_SECRET`, and `VIBESHUB_TOKEN_ENCRYPTION_KEY` are set, the
-auth routes return `503 oauth_not_configured` and the app boots normally
-without them. To exercise sign-in locally, register a GitHub OAuth app with
-callback `http://127.0.0.1:8000/api/auth/github/callback` and set
-`VIBESHUB_COOKIE_SECURE=false`.
+GitHub sign-in itself is optional: until `VIBESHUB_GITHUB_OAUTH_CLIENT_ID`
+and `VIBESHUB_SESSION_SECRET` are set, the sign-in routes return
+`503 oauth_not_configured` and everything else works. To exercise sign-in
+locally, register a GitHub OAuth app with callback
+`http://127.0.0.1:8000/api/auth/github/callback` and set all three secrets
+(client ID, session secret, token encryption key).
 
 ## Tests
 
@@ -47,11 +64,14 @@ cd webapp/backend
 
 | Route | Purpose |
 |---|---|
-| `POST /api/ingest` | Plugin upload (bearer = `gh auth token`); ships tar bundle of main + subagent JSONL |
-| `POST /api/uploads` | Web upload (session cookie); multipart form with transcript + optional subagents zip |
+| `POST /api/ingest` | Plugin upload (bearer = `gh auth token`); ships tar bundle of main + subagent JSONL. Optional `X-Vibeshub-Git-Branch` / `X-Vibeshub-Git-Commit` headers capture repo state at share time |
+| `POST /api/uploads` | Web upload; multipart form with transcript + optional subagents zip. Session cookie optional: anonymous uploads are forced public/standalone and get a one-time claim token |
 | `GET /api/traces/{short_id}` | Trace metadata (gated for private traces) |
 | `GET /api/traces/{short_id}/raw` | Main JSONL blob |
 | `GET /api/traces/{short_id}/agents/{agent_id}` | Per-subagent JSONL blob |
+| `GET /api/traces/{short_id}/session` | Claude-shaped JSONL the viewer renders (converted copy for codex/cursor imports, raw otherwise) |
+| `GET /api/traces/{short_id}/export/{codex\|claude}` | Trace as a resume-grade session file for the target CLI (what `/handoff` and `/import` call). Native format served verbatim, otherwise converted on the fly; filename/session-uuid/git metadata travel in `X-Vibeshub-*` response headers. 422 `cursor_to_claude_unsupported` / `unconvertible_trace` for pairings that would not resume |
+| `POST /api/traces/{short_id}/claim` | Attach an anonymous upload to an account with its one-time claim token |
 | `GET /api/traces/{owner}/{repo}/pull/{number}` | Traces attached to a PR |
 | `GET /api/users/{login}` | Profile page payload (traces + repo breakdown + stats) |
 | `GET /api/repos/{owner}/{repo}` | Repo page payload (traces + contributors + stats) |
@@ -62,6 +82,7 @@ cd webapp/backend
 | `GET /api/auth/github/callback` | OAuth callback; sets `vibeshub_session` cookie |
 | `POST /api/auth/logout` | Clear session |
 | `GET /api/github/my-repos` | Repo picker for the upload form |
+| `GET /api/github/repo-prs` | PR picker for the upload form |
 | `GET /api/github/users/...` / `repos/...` | Public GitHub stats used on profile + repo pages |
 | `GET /api/health` | Liveness |
 
@@ -69,12 +90,19 @@ cd webapp/backend
 
 Traces are written under `blob_prefix` (currently `traces/<short_id>/`):
 
-- `<prefix>main.jsonl` — primary transcript
+- `<prefix>main.jsonl` — primary transcript, as uploaded (native format)
+- `<prefix>converted.jsonl` — Claude-shaped copy, written only for imported
+  formats (codex, cursor); what `/session` serves and the digest reads
+- `<prefix>source_export.txt` — archived raw `.txt` terminal export, when one
+  was uploaded
 - `<prefix>agents/<agent_id>.jsonl` — one per subagent
+- `<prefix>agents/<agent_id>.converted.jsonl` — Claude-shaped subagent copy
 - `<prefix>agents/<agent_id>.meta.json` — subagent metadata
 
-Old single-file traces (`blob_path`) are still served; the v2 layout is the
-default for new uploads.
+Legacy single-file traces (`blob_path`, pre-2026-05-19) are no longer served:
+every read path returns 500 `trace not migrated to v2 layout` when
+`blob_prefix` is NULL. Convert any rows that remain with
+`python -m scripts.migrate_to_v2_storage` (from this directory).
 
 ## Environment variables
 
@@ -111,6 +139,12 @@ generation commands for the secrets) is in
 All three must be set for the summary agent to run. Missing any → upload still
 succeeds; the viewer hides the DigestPanel. Full flow, degradation modes, and
 ops queries: [app/agents/digest/README.md](app/agents/digest/README.md).
+
+Unlike every other var on this page, these three are not `Settings` fields:
+`app/agents/_client.py` reads them from `os.environ` at call time. Export them
+as process environment variables; do **not** put them in
+`webapp/backend/.env` — the dotenv source rejects keys that `Settings` does
+not declare, so a `.env` entry crashes the app at boot with `extra_forbidden`.
 
 | Var | Default | Notes |
 |---|---|---|

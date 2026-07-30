@@ -36,6 +36,8 @@ in headers:
 
 | Header | Required | Value |
 |---|---|---|
+| `User-Agent` | yes | `vibeshub-plugin/<version>`; Cloudflare 403s (error 1010) the default `Python-urllib/x.y` signature, so a client that omits this never reaches the server |
+| `Content-Type` | yes | `application/x-tar` |
 | `X-Vibeshub-Platform` | yes | the adapter's `platform_id` (`claude-code`, `codex`, `cursor`, ...) |
 | `X-Vibeshub-Plugin-Version` | yes | `vibeshub_client.version.PLUGIN_VERSION` |
 | `X-Vibeshub-Client-Redactions` | no | count of client-side redactions; defaults to `0`, a non-integer is a 400 |
@@ -53,7 +55,7 @@ what `import-trace` reports on, so they are provenance, never a requirement.
 ## Importing traces
 
 `import-trace <trace-url-or-short-id> --to codex|claude [--checkout]`
-(`/import-trace` in Claude Code, or run
+(`/import-trace` in Claude Code, `/vibeshub:import-trace` in Codex, or run
 [`cli/commands/import-trace.py`](cli/commands/import-trace.py) directly)
 downloads a trace as a resumable session for the other CLI.
 
@@ -93,8 +95,8 @@ look-alike server is refused rather than handed your credentials.
    - returns a stable `platform_id` string
 2. Wire it into `platform_adapter.select_adapter()`.
 3. Hook the platform's event surface so PR create/update/push invokes
-   `run_share_pipeline()` (Claude/Codex: `PostToolUse` on `Bash`; Cursor:
-   `afterShellExecution`).
+   `run_share_pipeline()` (Claude/Codex: `PostToolUse`, matcher
+   `Bash|exec_command|shell`; Cursor: `afterShellExecution`).
 4. Add a slash command (or platform equivalent) for manual share + delete.
 5. If the platform needs its own marketplace package (like Cursor), extend
    `scripts/sync-cursor-plugin.py` or add a sibling generator, keeping

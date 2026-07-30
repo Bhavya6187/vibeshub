@@ -66,7 +66,8 @@ Enable Settings → Features → "Include third-party Plugins, Skills, and other
 configs", then Reload Window.
 
 An `afterShellExecution` hook runs the plugin's share script after a
-`git push`, tagged with `VIBESHUB_PLATFORM=cursor`. It reads the Cursor agent
+`gh pr create`, `gh pr edit`, or `git push`, tagged with
+`VIBESHUB_PLATFORM=cursor`. It reads the Cursor agent
 transcript from `~/.cursor/projects/<project>/agent-transcripts/<id>/`
 (including any subagents) and uploads it the same way. Cursor transcripts record
 the conversation and tool calls but not tool outputs, token counts, or the model
@@ -79,6 +80,8 @@ name, so those fields are blank in the viewer.
 | `VIBESHUB_SERVER_URL` | `https://vibeshub.ai` | Override for self-hosting |
 | `VIBESHUB_HOOK_LOG` | `~/.vibeshub/hook.log` | Where the hook appends its per-invocation log |
 | `VIBESHUB_PLATFORM` | _(unset)_ | Set to `cursor` by Cursor hooks; otherwise inferred from transcript path / env |
+| `CODEX_HOME` | `~/.codex` | Codex home: where the Codex reader looks and where `--to codex` writes the rollout |
+| `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude Code config dir: where `--to claude` writes the imported session |
 
 ## How it works
 
@@ -93,18 +96,26 @@ pipeline:
    keys, Anthropic keys, JWTs, env-style assignments, and high-entropy tokens).
 3. Resolves the target PR — from `gh pr create`'s stdout, or by looking up the
    current branch's open PR for `git push` / `gh pr edit`.
-4. Uploads to vibeshub using your `gh auth token` for identity. TLS is verified
-   against the OS trust store (Python 3.10+) so the upload works on networks
-   behind a TLS-intercepting proxy whose root CA the OS already trusts.
-5. On the first upload for a PR, posts a `gh pr comment` linking to the
-   trace. Subsequent updates refresh the same trace in place.
+4. Uploads to vibeshub using your `gh auth token` for identity. TLS uses
+   Python's default verification; on a certificate error the upload is retried
+   once against the OS trust store (the vendored `truststore` on Python 3.10+,
+   or a macOS keychain / Windows cert-store scrape below that), so it still
+   works on networks behind a TLS-intercepting proxy whose root CA the OS
+   already trusts.
+5. On the first upload for a PR, posts a `gh pr comment` with the trace link
+   and, when the server returns one, the AI digest (ask, key decisions, files
+   touched, tests added, dead ends). Subsequent updates refresh the same trace
+   in place and post no further comment.
 
 Hook surfaces differ by platform: Claude Code and Codex use a `PostToolUse`
-hook on `Bash`; Cursor uses `afterShellExecution`.
+hook matching `Bash|exec_command|shell`; Cursor uses `afterShellExecution`
+matching `gh pr (create|edit)|git\s+push`.
 
 Installing the plugin is consent for upload. To stop uploading, uninstall the
 plugin or remove the hook entry from your settings. After-the-fact deletion of
-any trace is available via the manual share command below.
+any trace is available via the manual share command below, or from the trace
+page in the vibeshub UI (the Cursor package is hook-only and ships no slash
+commands).
 
 ## Manual share command
 
@@ -114,8 +125,9 @@ best target automatically:
 
 1. An open PR you authored on the current branch — the trace is attached to that
    PR and a PR comment is posted.
-2. Otherwise, if you are inside a git repo with a GitHub remote, the trace is
-   attached to that repo (no PR).
+2. Otherwise, if you are inside a git repo with a GitHub remote you are a
+   collaborator on, the trace is attached to that repo (no PR); the server
+   answers 403 for non-collaborators.
 3. Otherwise, a standalone public trace; you can switch it to private from the
    trace page in the vibeshub UI.
 
@@ -128,6 +140,8 @@ best target automatically:
 - `/handoff [<pr-url-or-number>]` uploads this session and then places the
   converted Codex session on this machine, printing the `codex resume <id>`
   that continues the same conversation there.
+
+The namespaced `/vibeshub:<command>` form also works in Claude Code.
 
 ### Codex
 
@@ -168,8 +182,17 @@ server you configured.
 
 Codex traces imported into Claude Code (and the reverse) are converted, so
 some detail is dropped by design: reasoning is encrypted per provider and
-cannot cross over. Cursor traces are view-grade only and have no Claude
-target.
+cannot cross over. Cursor traces can be exported to Codex (Cursor's recording
+gaps carry over) but have no Claude target; that pairing answers
+`422 cursor_to_claude_unsupported` because the result would not resume.
+
+Codex resume depends on the rollout's `session_meta.model_provider`, which the
+server writes at conversion (pinned to Codex's built-in `openai` provider).
+Rollouts placed before the server shipped that field fail to resume in the
+Codex TUI with a "Model provider not found" error, and Codex caches the
+provider per thread in `state_5.sqlite`, so patching the rollout file on disk
+is not enough: re-run `/handoff` (or `/import-trace --to codex`) to mint a
+fresh session instead.
 
 ## Privacy
 
@@ -179,4 +202,5 @@ viewer's GitHub repo-read access. Two redaction passes (client + server) catch
 known secret patterns, but neither is a guarantee. You can delete any trace
 after the fact via
 `/share-trace delete <pr-url | /t/<id> url | short-id>` (Claude Code) or
-`/vibeshub:share-trace delete …` (Codex).
+`/vibeshub:share-trace delete …` (Codex). Cursor ships no slash commands;
+delete from the trace page in the vibeshub UI instead.
